@@ -1,21 +1,43 @@
-import { Worker } from '../../src/presentation/worker';
-import { Kodiak } from '../../src/presentation/kodiak';
-import { FetchJobUseCase } from '../../src/application/use-cases/fetch-job.use-case';
-import { CompleteJobUseCase } from '../../src/application/use-cases/complete-job.use-case';
-import { FailJobUseCase } from '../../src/application/use-cases/fail-job.use-case';
-import type { Job } from '../../src/domain/entities/job.entity';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import type { Kodiak } from '../../src/presentation/kodiak.js';
+import type { Job } from '../../src/domain/entities/job.entity.js';
 
-jest.mock('../../src/infrastructure/redis/redis-queue.repository');
-jest.mock('../../src/application/use-cases/fetch-job.use-case');
-jest.mock('../../src/application/use-cases/complete-job.use-case');
-jest.mock('../../src/application/use-cases/fail-job.use-case');
+// Mocks must be defined before imports
+const mockFetchExecute = jest.fn();
+const mockCompleteExecute = jest.fn();
+const mockFailExecute = jest.fn();
+
+jest.unstable_mockModule('../../src/infrastructure/redis/redis-queue.repository.js', () => ({
+    RedisQueueRepository: jest.fn(),
+}));
+
+jest.unstable_mockModule('../../src/application/use-cases/fetch-job.use-case.js', () => ({
+    FetchJobUseCase: jest.fn().mockImplementation(() => ({
+        execute: mockFetchExecute,
+    })),
+}));
+
+jest.unstable_mockModule('../../src/application/use-cases/complete-job.use-case.js', () => ({
+    CompleteJobUseCase: jest.fn().mockImplementation(() => ({
+        execute: mockCompleteExecute,
+    })),
+}));
+
+jest.unstable_mockModule('../../src/application/use-cases/fail-job.use-case.js', () => ({
+    FailJobUseCase: jest.fn().mockImplementation(() => ({
+        execute: mockFailExecute,
+    })),
+}));
+
+// Import modules under test after mocks
+const { Worker } = await import('../../src/presentation/worker.js');
+const { FetchJobUseCase } = await import('../../src/application/use-cases/fetch-job.use-case.js');
+const { CompleteJobUseCase } = await import('../../src/application/use-cases/complete-job.use-case.js');
+const { FailJobUseCase } = await import('../../src/application/use-cases/fail-job.use-case.js');
 
 describe('Worker', () => {
     let mockKodiak: Kodiak;
-    let processor: jest.Mock;
-    let mockFetchExecute: jest.Mock;
-    let mockCompleteExecute: jest.Mock;
-    let mockFailExecute: jest.Mock;
+    let processor: any;
 
     beforeEach(() => {
         mockKodiak = {
@@ -24,24 +46,20 @@ describe('Worker', () => {
         } as unknown as Kodiak;
         processor = jest.fn();
         
-        (FetchJobUseCase as jest.Mock).mockClear();
-        (CompleteJobUseCase as jest.Mock).mockClear();
-        (FailJobUseCase as jest.Mock).mockClear();
+        // Reset the mock classes
+        (FetchJobUseCase as unknown as jest.Mock).mockClear();
+        (CompleteJobUseCase as unknown as jest.Mock).mockClear();
+        (FailJobUseCase as unknown as jest.Mock).mockClear();
 
-        mockFetchExecute = jest.fn().mockResolvedValue(null);
-        (FetchJobUseCase as jest.Mock).mockImplementation(() => ({
-            execute: mockFetchExecute,
-        }));
+        // Reset the mock methods
+        mockFetchExecute.mockReset();
+        mockFetchExecute.mockResolvedValue(null);
 
-        mockCompleteExecute = jest.fn().mockResolvedValue(undefined);
-        (CompleteJobUseCase as jest.Mock).mockImplementation(() => ({
-            execute: mockCompleteExecute,
-        }));
+        mockCompleteExecute.mockReset();
+        mockCompleteExecute.mockResolvedValue(undefined);
 
-        mockFailExecute = jest.fn().mockResolvedValue(undefined);
-        (FailJobUseCase as jest.Mock).mockImplementation(() => ({
-            execute: mockFailExecute,
-        }));
+        mockFailExecute.mockReset();
+        mockFailExecute.mockResolvedValue(undefined);
     });
 
     afterEach(() => {

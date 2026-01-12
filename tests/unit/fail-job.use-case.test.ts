@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals';
 import { FailJobUseCase } from '../../src/application/use-cases/fail-job.use-case';
 import type { IQueueRepository } from '../../src/domain/repositories/queue.repository';
 
@@ -10,7 +11,7 @@ describe('FailJobUseCase', () => {
             add: jest.fn(),
             fetchNext: jest.fn(),
             markAsCompleted: jest.fn(),
-            markAsFailed: jest.fn().mockResolvedValue(undefined),
+            markAsFailed: jest.fn<IQueueRepository<unknown>['markAsFailed']>().mockResolvedValue(undefined),
         };
         failJobUseCase = new FailJobUseCase(mockQueueRepository);
     });
