@@ -1,7 +1,7 @@
-import IORedis, { type RedisOptions } from 'ioredis';
-import { Queue } from './queue';
-import { Worker } from './worker';
-import type { WorkerOptions } from '../application/dtos/worker-options.dto';
+import { Redis, type RedisOptions } from 'ioredis';
+import { Queue } from './queue.js';
+import { Worker } from './worker.js';
+import type { WorkerOptions } from '../application/dtos/worker-options.dto.js';
 
 export interface KodiakOptions {
     connection: RedisOptions;
@@ -9,11 +9,11 @@ export interface KodiakOptions {
 }
 
 export class Kodiak {
-    public readonly connection: IORedis;
+    public readonly connection: Redis;
     public readonly prefix: string;
 
     constructor(private options: KodiakOptions) {
-        this.connection = new IORedis(options.connection);
+        this.connection = new Redis(options.connection);
         this.prefix = options.prefix ?? 'kodiak';
     }
 

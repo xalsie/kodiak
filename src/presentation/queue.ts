@@ -1,8 +1,8 @@
-import { Kodiak } from './kodiak';
-import { AddJobUseCase } from '../application/use-cases/add-job.use-case';
-import { RedisQueueRepository } from '../infrastructure/redis/redis-queue.repository';
-import type { Job } from '../domain/entities/job.entity';
-import type { JobOptions } from '../application/dtos/job-options.dto';
+import { Kodiak } from './kodiak.js';
+import { AddJobUseCase } from '../application/use-cases/add-job.use-case.js';
+import { RedisQueueRepository } from '../infrastructure/redis/redis-queue.repository.js';
+import type { Job } from '../domain/entities/job.entity.js';
+import type { JobOptions } from '../application/dtos/job-options.dto.js';
 
 export class Queue<T> {
     private readonly addJobUseCase: AddJobUseCase<T>;

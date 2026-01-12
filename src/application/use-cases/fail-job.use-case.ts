@@ -1,4 +1,4 @@
-import type { IQueueRepository } from '../../domain/repositories/queue.repository';
+import type { IQueueRepository } from '../../domain/repositories/queue.repository.js';
 
 export class FailJobUseCase<T> {
     constructor(private readonly queueRepository: IQueueRepository<T>) {}

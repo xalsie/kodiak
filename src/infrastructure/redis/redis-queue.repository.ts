@@ -1,8 +1,12 @@
-import IORedis from 'ioredis';
+import { Redis } from 'ioredis';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { Job } from '../../domain/entities/job.entity';
-import type { IQueueRepository } from '../../domain/repositories/queue.repository';
+import { fileURLToPath } from 'url';
+import type { Job } from '../../domain/entities/job.entity.js';
+import type { IQueueRepository } from '../../domain/repositories/queue.repository.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export class RedisQueueRepository<T> implements IQueueRepository<T> {
     private readonly waitingQueueKey: string;
@@ -14,7 +18,7 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
 
     constructor(
         private readonly queueName: string,
-        private readonly connection: IORedis,
+        private readonly connection: Redis,
         private readonly prefix: string,
     ) {
         this.waitingQueueKey = `${prefix}:queue:${queueName}:waiting`;

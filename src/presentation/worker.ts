@@ -1,11 +1,11 @@
 import { EventEmitter } from 'events';
-import { Kodiak } from './kodiak';
-import { FetchJobUseCase } from '../application/use-cases/fetch-job.use-case';
-import { CompleteJobUseCase } from '../application/use-cases/complete-job.use-case';
-import { FailJobUseCase } from '../application/use-cases/fail-job.use-case';
-import { RedisQueueRepository } from '../infrastructure/redis/redis-queue.repository';
-import type { WorkerOptions } from '../application/dtos/worker-options.dto';
-import type { Job } from '../domain/entities/job.entity';
+import { Kodiak } from './kodiak.js';
+import { FetchJobUseCase } from '../application/use-cases/fetch-job.use-case.js';
+import { CompleteJobUseCase } from '../application/use-cases/complete-job.use-case.js';
+import { FailJobUseCase } from '../application/use-cases/fail-job.use-case.js';
+import { RedisQueueRepository } from '../infrastructure/redis/redis-queue.repository.js';
+import type { WorkerOptions } from '../application/dtos/worker-options.dto.js';
+import type { Job } from '../domain/entities/job.entity.js';
 
 export class Worker<T> extends EventEmitter {
     private readonly fetchJobUseCase: FetchJobUseCase<T>;
@@ -85,11 +85,16 @@ export class Worker<T> extends EventEmitter {
 
                         // Mark as completed
                         await this.completeJobUseCase.execute(job.id);
+                        job.status = 'completed';
+                        job.completedAt = new Date();
                         this.emit('completed', job);
                     } catch (error) {
                         // Mark as failed
                         const err = error instanceof Error ? error : new Error(String(error));
                         await this.failJobUseCase.execute(job.id, err);
+                        job.status = 'failed';
+                        job.failedAt = new Date();
+                        job.error = err.message;
                         this.emit('failed', job, err);
                     }
                 } else {

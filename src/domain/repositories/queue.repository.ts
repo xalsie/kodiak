@@ -1,4 +1,4 @@
-import type { Job } from '../entities/job.entity';
+import type { Job } from '../entities/job.entity.js';
 
 export interface IQueueRepository<T> {
     add(job: Job<T>, score: number, isDelayed: boolean): Promise<void>;

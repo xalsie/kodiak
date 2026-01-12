@@ -21,7 +21,7 @@
     "type": "module",
     "main": "dist/index.js",
     "scripts": {
-        "build": "tsc",
+        "build": "tsc --config tsconfig.build.json",
         "test": "jest",
         "lint": "eslint . --ext .ts",
         "format": "prettier --write ."

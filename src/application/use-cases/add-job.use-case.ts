@@ -1,6 +1,6 @@
-import type { Job } from '../../domain/entities/job.entity';
-import type { IQueueRepository } from '../../domain/repositories/queue.repository';
-import type { JobOptions } from '../dtos/job-options.dto';
+import type { Job } from '../../domain/entities/job.entity.js';
+import type { IQueueRepository } from '../../domain/repositories/queue.repository.js';
+import type { JobOptions } from '../dtos/job-options.dto.js';
 
 export class AddJobUseCase<T> {
     constructor(private readonly queueRepository: IQueueRepository<T>) {}
