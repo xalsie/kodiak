@@ -1,6 +1,6 @@
 {
     "name": "@xalsie/kodiak",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Kodiak: The heavy-duty job queue that mauls latency. Native TypeScript & Lua.",
     "publishConfig": {
         "registry": "https://npm.pkg.github.com/"
