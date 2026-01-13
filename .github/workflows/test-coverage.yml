@@ -10,6 +10,12 @@ jobs:
   test-coverage:
     name: Run Tests with Coverage
     runs-on: ubuntu-latest
+    
+    services:
+      dragonfly:
+        image: dragonflydb/dragonfly
+        ports:
+          - 6379:6379
 
     steps:
       - name: Checkout code
