@@ -1,11 +1,24 @@
-# 🐻 Kodiak
-
-**The apex predator of job queues.**
-
-![TypeScript](https://img.shields.io/badge/written%20in-TypeScript-3178C6?style=flat-square&logo=typescript)
-![Lua](https://img.shields.io/badge/powered%20by-Lua-000080?style=flat-square&logo=lua)
-![DragonflyDB](https://img.shields.io/badge/optimized%20for-DragonflyDB-ff0000?style=flat-square)
-![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
+<div align="center">
+  <table border="0">
+    <tr>
+      <td>
+        <img src="logo/logoEmpty.png" width="300" alt="logo kodiak" />
+      </td>
+      <td align="center">
+        <h1>KODIAK</h1>
+        <strong>The apex predator of job queues.</strong>
+      </td>
+    </tr>
+  </table>
+  <br />
+  <div>
+    <img src="https://img.shields.io/badge/written%20in-TypeScript-3178C6?style=flat-square&logo=typescript" alt="TypeScript" />
+    <img src="https://img.shields.io/badge/powered%20by-Lua-000080?style=flat-square&logo=lua" alt="Lua" />
+    <img src="https://img.shields.io/badge/optimized%20for-DragonflyDB-ff0000?style=flat-square" alt="DragonflyDB" />
+    <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License" />
+  </div>
+  <br/>
+</div>
 
 **Kodiak** is a high-performance, distributed job queue built for the modern era of multi-threaded in-memory databases. Designed to run on **DragonflyDB** (while remaining Redis-compatible), it leverages atomic **Lua scripts** to handle massive throughput with zero race conditions.
 
