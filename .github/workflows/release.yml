@@ -15,7 +15,7 @@ jobs:
 
     services:
       dragonfly:
-        image: dragonflydb/dragonfly
+        image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.36.0
         ports:
           - 6379:6379
 
