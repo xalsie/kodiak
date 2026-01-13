@@ -2,7 +2,6 @@ import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals
 import type { Kodiak } from '../../src/presentation/kodiak.js';
 import type { Job } from '../../src/domain/entities/job.entity.js';
 
-// Mocks must be defined before imports
 const mockFetchExecute = jest.fn();
 const mockCompleteExecute = jest.fn();
 const mockFailExecute = jest.fn();
@@ -29,7 +28,6 @@ jest.unstable_mockModule('../../src/application/use-cases/fail-job.use-case.js',
     })),
 }));
 
-// Import modules under test after mocks
 const { Worker } = await import('../../src/presentation/worker.js');
 const { FetchJobUseCase } = await import('../../src/application/use-cases/fetch-job.use-case.js');
 const { CompleteJobUseCase } = await import('../../src/application/use-cases/complete-job.use-case.js');
@@ -37,29 +35,27 @@ const { FailJobUseCase } = await import('../../src/application/use-cases/fail-jo
 
 describe('Worker', () => {
     let mockKodiak: Kodiak;
-    let processor: any;
+    let processor: jest.MockedFunction<(job: unknown) => Promise<void>>;
 
     beforeEach(() => {
         mockKodiak = {
             connection: {},
             prefix: 'kodiak-test',
-        } as unknown as Kodiak;
-        processor = jest.fn();
-        
-        // Reset the mock classes
+        } as Kodiak;
+        processor = jest.fn() as jest.MockedFunction<(job: unknown) => Promise<void>>;
+
         (FetchJobUseCase as unknown as jest.Mock).mockClear();
         (CompleteJobUseCase as unknown as jest.Mock).mockClear();
         (FailJobUseCase as unknown as jest.Mock).mockClear();
 
-        // Reset the mock methods
         mockFetchExecute.mockReset();
-        mockFetchExecute.mockResolvedValue(null);
+        mockFetchExecute.mockResolvedValue(null as never);
 
         mockCompleteExecute.mockReset();
-        mockCompleteExecute.mockResolvedValue(undefined);
+        mockCompleteExecute.mockResolvedValue(undefined as never);
 
         mockFailExecute.mockReset();
-        mockFailExecute.mockResolvedValue(undefined);
+        mockFailExecute.mockResolvedValue(undefined as never);
     });
 
     afterEach(() => {
@@ -112,8 +108,8 @@ describe('Worker', () => {
         };
 
         mockFetchExecute
-            .mockResolvedValueOnce(mockJob)
-            .mockResolvedValueOnce(null);
+            .mockResolvedValueOnce(mockJob as never)
+            .mockResolvedValueOnce(null as never);
 
         processor.mockResolvedValue(undefined);
 
@@ -146,8 +142,8 @@ describe('Worker', () => {
         const testError = new Error('Processing failed');
 
         mockFetchExecute
-            .mockResolvedValueOnce(mockJob)
-            .mockResolvedValueOnce(null);
+            .mockResolvedValueOnce(mockJob as never)
+            .mockResolvedValueOnce(null as never);
 
         processor.mockRejectedValue(testError);
 
@@ -158,6 +154,87 @@ describe('Worker', () => {
 
         expect(mockFailExecute).toHaveBeenCalledWith('job-123', testError);
         expect(failedEmitter).toHaveBeenCalledWith(mockJob, testError);
+
+        await worker.stop();
+    });
+
+    it('should throw error if started while already running', async () => {
+        const worker = new Worker('test-queue', processor, mockKodiak);
+        await worker.start();
+        
+        await expect(worker.start()).rejects.toThrow('Worker "test-queue" is already running');
+        
+        await worker.stop();
+    });
+
+    it('should emit error event if fetchJob fails', async () => {
+        const worker = new Worker('test-queue', processor, mockKodiak);
+        const errorEmitter = jest.fn();
+        worker.on('error', errorEmitter);
+
+        const testError = new Error('Fetch failed');
+        mockFetchExecute.mockRejectedValue(testError as never);
+
+        await worker.start();
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        expect(errorEmitter).toHaveBeenCalledWith(testError);
+        
+        await worker.stop();
+    });
+
+    it('should respect concurrency limit', () => {
+        const worker = new Worker('test-queue', processor, mockKodiak, { concurrency: 1 });
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const anyWorker = worker as any;
+
+        anyWorker.isRunning = true;
+        anyWorker.activeJobs = 1;
+        
+        const spy = jest.spyOn(global, 'setTimeout');
+        
+        anyWorker.processNext();
+        
+        expect(spy).toHaveBeenCalledWith(expect.any(Function), 100);
+        
+        anyWorker.isRunning = false;
+    });
+
+    it('should handle non-Error objects thrown by processor', async () => {
+        const worker = new Worker('test-queue', processor, mockKodiak);
+        const failedEmitter = jest.fn();
+        worker.on('failed', failedEmitter);
+
+        const mockJob: Job<{ message: string }> = {
+            id: 'job-string-error',
+            data: { message: 'test' },
+            status: 'active',
+            priority: 10,
+            addedAt: new Date(),
+            retryCount: 0,
+            maxAttempts: 3,
+        };
+
+        const stringError = 'I am not an Error object';
+
+        mockFetchExecute
+            .mockResolvedValueOnce(mockJob as never)
+            .mockResolvedValueOnce(null as never);
+
+        processor.mockRejectedValue(stringError);
+
+        await worker.start();
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        expect(mockFailExecute).toHaveBeenCalledWith(
+            'job-string-error', 
+            expect.objectContaining({ message: stringError })
+        );
+        expect(failedEmitter).toHaveBeenCalledWith(
+            mockJob, 
+            expect.objectContaining({ message: stringError })
+        );
 
         await worker.stop();
     });

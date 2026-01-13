@@ -4,7 +4,7 @@ export interface Job<T> {
     id: string;
     data: T;
     status: JobStatus;
-    priority: number; // 1 (High) to 10 (Normal) to 100 (Low)
+    priority: number;
     addedAt: Date;
     startedAt?: Date;
     completedAt?: Date;

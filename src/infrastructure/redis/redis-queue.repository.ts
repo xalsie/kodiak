@@ -37,13 +37,13 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
 
         await this.connection.eval(
             this.addJobScript,
-            3, // Number of keys
+            3,
             this.waitingQueueKey,
             this.delayedQueueKey,
             jobKey,
             job.id,
             String(score),
-            JSON.stringify(job), // Store full job entity for simplicity
+            JSON.stringify(job),
             isDelayed ? '1' : '0',
         );
     }
@@ -52,7 +52,7 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
         const now = Date.now();
         const jobId = (await this.connection.eval(
             this.moveJobScript,
-            2, // Number of keys
+            2,
             this.waitingQueueKey,
             this.activeQueueKey,
             String(now),

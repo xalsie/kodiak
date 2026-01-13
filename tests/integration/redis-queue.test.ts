@@ -21,7 +21,7 @@ describe('Integration: RedisQueueRepository', () => {
     });
 
     beforeEach(async () => {
-        await redis.flushall(); // Clean slate
+        await redis.flushall();
         repository = new RedisQueueRepository<TestPayload>(queueName, redis, prefix);
     });
 
@@ -61,12 +61,10 @@ describe('Integration: RedisQueueRepository', () => {
         const jobHigh = createJob('high', 1);
         const jobNormal = createJob('normal', 10);
 
-        // Add in random order
         await repository.add(jobLow.job, jobLow.score, false);
         await repository.add(jobNormal.job, jobNormal.score, false);
         await repository.add(jobHigh.job, jobHigh.score, false);
 
-        // Fetch order should be High -> Normal -> Low
         const first = await repository.fetchNext();
         const second = await repository.fetchNext();
         const third = await repository.fetchNext();
@@ -92,6 +90,53 @@ describe('Integration: RedisQueueRepository', () => {
     });
 
     it('should return null when queue is empty', async () => {
+        const fetched = await repository.fetchNext();
+        expect(fetched).toBeNull();
+    });
+
+    it('should mark a job as completed', async () => {
+        const { job, score } = createJob('job-completed');
+        await repository.add(job, score, false);
+
+        const fetched = await repository.fetchNext();
+        expect(fetched?.id).toBe('job-completed');
+
+        const activeCount = await redis.llen(`${prefix}:queue:${queueName}:active`);
+        expect(activeCount).toBe(1);
+
+        const completedAt = new Date();
+        await repository.markAsCompleted('job-completed', completedAt);
+
+        const activeCountAfter = await redis.llen(`${prefix}:queue:${queueName}:active`);
+        expect(activeCountAfter).toBe(0);
+
+        const state = await redis.hget(`${prefix}:jobs:job-completed`, 'state');
+        expect(state).toBe('completed');
+    });
+
+    it('should mark a job as failed', async () => {
+        const { job, score } = createJob('job-failed');
+        await repository.add(job, score, false);
+
+        await repository.fetchNext();
+
+        const failedAt = new Date();
+        const errorMsg = 'Something went wrong';
+        await repository.markAsFailed('job-failed', errorMsg, failedAt);
+
+        const activeCount = await redis.llen(`${prefix}:queue:${queueName}:active`);
+        expect(activeCount).toBe(0);
+
+        const state = await redis.hget(`${prefix}:jobs:job-failed`, 'state');
+        const error = await redis.hget(`${prefix}:jobs:job-failed`, 'error');
+        expect(state).toBe('failed');
+        expect(error).toBe(errorMsg);
+    });
+
+    it('should return null if job data is missing (corrupted state)', async () => {
+        const jobId = 'ghost-job';
+        await redis.zadd(`${prefix}:queue:${queueName}:waiting`, 1000, jobId);
+
         const fetched = await repository.fetchNext();
         expect(fetched).toBeNull();
     });

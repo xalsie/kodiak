@@ -31,6 +31,4 @@ export class AddJobUseCase<T> {
         await this.queueRepository.add(job, score, delay > 0);
         return job;
     }
-
-    // Removed resolvePriority method as we use numbers directly
 }
