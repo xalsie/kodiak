@@ -18,6 +18,7 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
     private moveJobScript: string;
     private completeJobScript: string;
     private failJobScript: string;
+    private promoteDelayedJobsScript: string;
 
     constructor(
         private readonly queueName: string,
@@ -36,6 +37,7 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
         this.moveJobScript = fs.readFileSync(path.join(__dirname, 'lua', 'move_job.lua'), 'utf8');
         this.completeJobScript = fs.readFileSync(path.join(__dirname, 'lua', 'complete_job.lua'), 'utf8');
         this.failJobScript = fs.readFileSync(path.join(__dirname, 'lua', 'fail_job.lua'), 'utf8');
+        this.promoteDelayedJobsScript = fs.readFileSync(path.join(__dirname, 'lua', 'promote_delayed_jobs.lua'), 'utf8');
     }
 
     async add(job: Job<T>, score: number, isDelayed: boolean): Promise<void> {
@@ -53,6 +55,11 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
             'added_at',
             String(job.addedAt.getTime()),
         ];
+
+        if (job.backoff) {
+            jobFields.push('backoff_type', job.backoff.type);
+            jobFields.push('backoff_delay', String(job.backoff.delay));
+        }
 
         await this.connection.eval(
             this.addJobScript,
@@ -153,12 +160,28 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
         
         await this.connection.eval(
             this.failJobScript,
-            2,
+            3,
             this.activeQueueKey,
             jobKey,
+            this.delayedQueueKey,
             jobId,
             error,
             String(failedAt.getTime())
         );
+    }
+
+    async promoteDelayedJobs(limit: number = 50): Promise<number> {
+        const now = Date.now();
+        const result = await this.connection.eval(
+            this.promoteDelayedJobsScript,
+            4,
+            this.delayedQueueKey,
+            this.waitingQueueKey,
+            this.notificationQueueKey,
+            this.jobKeyPrefix,
+            String(now),
+            String(limit)
+        );
+        return Number(result);
     }
 }
