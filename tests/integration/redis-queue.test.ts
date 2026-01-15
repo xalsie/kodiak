@@ -133,6 +133,34 @@ describe('Integration: RedisQueueRepository', () => {
         expect(error).toBe(errorMsg);
     });
 
+    it('should retry a job if maxAttempts > 1', async () => {
+        // createJob sets retryCount: 0, maxAttempts: 1 by default
+        const { job, score } = createJob('job-retry', 10, 0);
+        job.maxAttempts = 2; // Allow 1 retry (2 attempts total)
+        await repository.add(job, score, false);
+
+        await repository.fetchNext(); // Fetch it (Active)
+
+        const failedAt = new Date();
+        const errorMsg = 'First failure';
+        await repository.markAsFailed('job-retry', errorMsg, failedAt);
+
+        // Should be in delayed queue, not failed
+        const state = await redis.hget(`${prefix}:jobs:job-retry`, 'state');
+        expect(state).toBe('delayed');
+
+        const retryCount = await redis.hget(`${prefix}:jobs:job-retry`, 'retry_count');
+        expect(retryCount).toBe('1');
+
+        // Should NOT be in active queue
+        const activeCount = await redis.llen(`${prefix}:queue:${queueName}:active`);
+        expect(activeCount).toBe(0);
+
+        // Should be in delayed ZSET
+        const delayedScore = await redis.zscore(`${prefix}:queue:${queueName}:delayed`, 'job-retry');
+        expect(delayedScore).not.toBeNull();
+    });
+
     it('should return null if job data is missing (corrupted state)', async () => {
         const jobId = 'ghost-job';
         await redis.zadd(`${prefix}:queue:${queueName}:waiting`, 1000, jobId);
