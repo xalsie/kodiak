@@ -14,7 +14,9 @@
         "rootDir": "./src",
         "noEmit": false,
         "types": ["node"],
-        "incremental": true
+        "incremental": true,
+        "declaration": true,
+        "declarationMap": true
     },
     "include": ["src/**/*.ts"],
     "exclude": ["node_modules", "dist"]
