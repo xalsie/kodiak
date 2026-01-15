@@ -2,6 +2,9 @@ import { jest } from '@jest/globals';
 import { AddJobUseCase } from '../../src/application/use-cases/add-job.use-case';
 import type { IQueueRepository } from '../../src/domain/repositories/queue.repository';
 
+// Score calculation multiplier from AddJobUseCase implementation
+const PRIORITY_MULTIPLIER = 10000000000000;
+
 describe('AddJobUseCase', () => {
     let addJobUseCase: AddJobUseCase<{ message: string }>;
     let mockQueueRepository: jest.Mocked<IQueueRepository<{ message: string }>>;
@@ -95,10 +98,10 @@ describe('AddJobUseCase', () => {
         await addJobUseCase.execute(id, data, options);
         const afterCall = Date.now();
 
-        // Score calculation: priority * 10000000000000 + (now + delay)
+        // Score calculation: priority * PRIORITY_MULTIPLIER + (now + delay)
         // With priority 2 and no delay:
-        const minExpectedScore = 2 * 10000000000000 + beforeCall;
-        const maxExpectedScore = 2 * 10000000000000 + afterCall;
+        const minExpectedScore = 2 * PRIORITY_MULTIPLIER + beforeCall;
+        const maxExpectedScore = 2 * PRIORITY_MULTIPLIER + afterCall;
 
         expect(mockQueueRepository.add).toHaveBeenCalledWith(
             expect.any(Object),
@@ -121,9 +124,9 @@ describe('AddJobUseCase', () => {
         await addJobUseCase.execute(id, data, options);
         const afterCall = Date.now();
 
-        // Score calculation: priority * 10000000000000 + (now + delay)
-        const minExpectedScore = 1 * 10000000000000 + beforeCall + delay;
-        const maxExpectedScore = 1 * 10000000000000 + afterCall + delay;
+        // Score calculation: priority * PRIORITY_MULTIPLIER + (now + delay)
+        const minExpectedScore = 1 * PRIORITY_MULTIPLIER + beforeCall + delay;
+        const maxExpectedScore = 1 * PRIORITY_MULTIPLIER + afterCall + delay;
 
         const [, actualScore] = mockQueueRepository.add.mock.calls[0];
         expect(actualScore).toBeGreaterThanOrEqual(minExpectedScore);
@@ -149,17 +152,24 @@ describe('AddJobUseCase', () => {
         const data = { message: 'fifo test' };
         const priority = 5;
 
+        // Use fake timers to control time progression
+        jest.useFakeTimers();
+        const baseTime = Date.now();
+        jest.setSystemTime(baseTime);
+
         await addJobUseCase.execute('job-first', data, { priority });
         const firstScore = mockQueueRepository.add.mock.calls[0][1] as number;
 
-        // Small delay to ensure different timestamp
-        await new Promise(resolve => setTimeout(resolve, 10));
+        // Advance time by 10ms to ensure different timestamp
+        jest.setSystemTime(baseTime + 10);
 
         await addJobUseCase.execute('job-second', data, { priority });
         const secondScore = mockQueueRepository.add.mock.calls[1][1] as number;
 
         // First job should have lower score than second (FIFO)
         expect(firstScore).toBeLessThan(secondScore);
+
+        jest.useRealTimers();
     });
 
     it('should return the created job', async () => {
