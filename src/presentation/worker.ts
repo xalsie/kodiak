@@ -1,18 +1,24 @@
 import { EventEmitter } from 'events';
+import { Redis } from 'ioredis';
 import { Kodiak } from './kodiak.js';
 import { FetchJobUseCase } from '../application/use-cases/fetch-job.use-case.js';
 import { CompleteJobUseCase } from '../application/use-cases/complete-job.use-case.js';
 import { FailJobUseCase } from '../application/use-cases/fail-job.use-case.js';
 import { RedisQueueRepository } from '../infrastructure/redis/redis-queue.repository.js';
+import { Semaphore } from '../utils/semaphore.js';
 import type { WorkerOptions } from '../application/dtos/worker-options.dto.js';
 import type { Job } from '../domain/entities/job.entity.js';
 
 export class Worker<T> extends EventEmitter {
-    private readonly fetchJobUseCase: FetchJobUseCase<T>;
+    private fetchJobUseCases: FetchJobUseCase<T>[] = [];
     private readonly completeJobUseCase: CompleteJobUseCase<T>;
     private readonly failJobUseCase: FailJobUseCase<T>;
     private isRunning = false;
     private activeJobs = 0;
+    private blockingConnections: Redis[] = [];
+    private ackConnection: Redis;
+    private slotErrors: number[] = [];
+    private processingSemaphore: Semaphore | null = null;
 
     constructor(
         public readonly name: string,
@@ -21,14 +27,19 @@ export class Worker<T> extends EventEmitter {
         private opts?: WorkerOptions,
     ) {
         super();
-        const queueRepository = new RedisQueueRepository<T>(
+        
+        // Dedicated connection for acknowledgments (complete/fail)
+        // prevents blocking the main application connection
+        this.ackConnection = kodiak.connection.duplicate();
+
+        const ackQueueRepository = new RedisQueueRepository<T>(
             name,
-            kodiak.connection,
+            this.ackConnection,
             kodiak.prefix,
         );
-        this.fetchJobUseCase = new FetchJobUseCase<T>(queueRepository);
-        this.completeJobUseCase = new CompleteJobUseCase<T>(queueRepository);
-        this.failJobUseCase = new FailJobUseCase<T>(queueRepository);
+
+        this.completeJobUseCase = new CompleteJobUseCase<T>(ackQueueRepository);
+        this.failJobUseCase = new FailJobUseCase<T>(ackQueueRepository);
     }
 
     /**
@@ -41,7 +52,34 @@ export class Worker<T> extends EventEmitter {
         }
         this.isRunning = true;
         this.emit('start');
-        this.processNext();
+        
+        const concurrency = this.opts?.concurrency ?? 1;
+        const prefetch = this.opts?.prefetch ?? 0;
+        
+        // Total slots = concurrency + prefetch
+        // This means we can have 'totalSlots' jobs fetched and "Active" in Redis/Memory
+        // But only 'concurrency' jobs are actually executing the processor function
+        const totalSlots = concurrency + prefetch;
+
+        this.processingSemaphore = new Semaphore(concurrency);
+
+        // Reset error counters
+        this.slotErrors = new Array(totalSlots).fill(0);
+
+        // Create a dedicated blocking connection and use case for each slot
+        for (let i = 0; i < totalSlots; i++) {
+            const blockingConnection = this.kodiak.connection.duplicate();
+            this.blockingConnections.push(blockingConnection);
+
+            const blockingQueueRepository = new RedisQueueRepository<T>(
+                this.name,
+                blockingConnection,
+                this.kodiak.prefix,
+            );
+
+            this.fetchJobUseCases.push(new FetchJobUseCase<T>(blockingQueueRepository));
+            this.processNext(i);
+        }
     }
 
     /**
@@ -54,6 +92,15 @@ export class Worker<T> extends EventEmitter {
         while (this.activeJobs > 0) {
             await new Promise(resolve => setTimeout(resolve, 100));
         }
+
+        // Close all blocking connections
+        await Promise.all(this.blockingConnections.map(c => c.quit()));
+        this.blockingConnections = [];
+        this.fetchJobUseCases = [];
+
+        // Close ack connection
+        await this.ackConnection.quit();
+
         this.emit('stop');
     }
 
@@ -61,25 +108,42 @@ export class Worker<T> extends EventEmitter {
      * Internal: Process the next job in the queue.
      * Called recursively to form a continuous loop.
      */
-    private processNext(): void {
+    private processNext(slotIndex: number): void {
         if (!this.isRunning) {
             return;
         }
 
-        const maxConcurrency = this.opts?.concurrency ?? 1;
-        if (this.activeJobs >= maxConcurrency) {
-            // Wait a bit before trying again
-            setTimeout(() => this.processNext(), 100);
+        const concurrency = this.opts?.concurrency ?? 1;
+        const prefetch = this.opts?.prefetch ?? 0;
+        const totalSlots = concurrency + prefetch;
+        
+        // Safety check to ensure we don't exceed total allowed active jobs
+        if (this.fetchJobUseCases.length > totalSlots) {
             return;
         }
 
-        this.activeJobs++;
+        const fetchUseCase = this.fetchJobUseCases[slotIndex];
 
-        this.fetchJobUseCase
-            .execute()
+        if (!fetchUseCase) {
+             // Should not happen if logic is correct
+            return;
+        }
+
+        fetchUseCase
+            .execute(2) // Block for up to 2 seconds
             .then(async (job: Job<T> | null) => {
+                // Success (or successful timeout) - reset error count
+                this.slotErrors[slotIndex] = 0;
+
                 if (job) {
+                    this.activeJobs++;
                     try {
+                        // Acquire semaphore before processing
+                        // This implements the prefetch logic: we hold the job but wait for CPU slot
+                        if (this.processingSemaphore) {
+                            await this.processingSemaphore.acquire();
+                        }
+                        
                         // Call the user's processor function
                         await this.processor(job.data);
 
@@ -96,20 +160,38 @@ export class Worker<T> extends EventEmitter {
                         job.failedAt = new Date();
                         job.error = err.message;
                         this.emit('failed', job, err);
+                    } finally {
+                        if (this.processingSemaphore) {
+                            this.processingSemaphore.release();
+                        }
+                        this.activeJobs--;
                     }
                 } else {
-                    // No job available, wait a bit before polling again
-                    await new Promise(resolve => setTimeout(resolve, 100));
+                    // No job available, loop again immediately (checking isRunning)
+                    // We already blocked for 2s, so no need to sleep more
                 }
             })
             .catch((error: Error) => {
+                // Ignore connection closed error if we are stopping (caused by quit())
+                if (!this.isRunning && (error.message === 'Connection is closed' || error.message.includes('Connection is closed'))) {
+                    return;
+                }
+                
                 this.emit('error', error);
+                // Increment error count for this slot
+                this.slotErrors[slotIndex]++;
             })
             .finally(() => {
-                this.activeJobs--;
-                // Schedule the next iteration
+                // Schedule the next iteration for THIS slot
                 if (this.isRunning) {
-                    setImmediate(() => this.processNext());
+                    const errorCount = this.slotErrors[slotIndex];
+                    if (errorCount > 0) {
+                        // Exponential backoff: 1s, 2s, 4s... max 30s
+                        const delay = Math.min(1000 * Math.pow(2, errorCount - 1), 30000);
+                        setTimeout(() => this.processNext(slotIndex), delay);
+                    } else {
+                        setImmediate(() => this.processNext(slotIndex));
+                    }
                 }
             });
     }

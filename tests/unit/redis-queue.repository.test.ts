@@ -41,4 +41,38 @@ describe('Unit: RedisQueueRepository', () => {
 
         expect(result).toBeNull();
     });
+
+    it('should use Lua script to mark job as completed', async () => {
+        const jobId = 'job-123';
+        const completedAt = new Date();
+
+        await repository.markAsCompleted(jobId, completedAt);
+
+        expect(mockRedis.eval).toHaveBeenCalledWith(
+            expect.any(String), // The script content (mocked as 'return 1')
+            2,
+            expect.stringContaining(':active'),
+            expect.stringContaining(`:jobs:${jobId}`),
+            jobId,
+            String(completedAt.getTime())
+        );
+    });
+
+    it('should use Lua script to mark job as failed', async () => {
+        const jobId = 'job-456';
+        const failedAt = new Date();
+        const errorMsg = 'Oops';
+
+        await repository.markAsFailed(jobId, errorMsg, failedAt);
+
+        expect(mockRedis.eval).toHaveBeenCalledWith(
+            expect.any(String), // The script content
+            2,
+            expect.stringContaining(':active'),
+            expect.stringContaining(`:jobs:${jobId}`),
+            jobId,
+            errorMsg,
+            String(failedAt.getTime())
+        );
+    });
 });

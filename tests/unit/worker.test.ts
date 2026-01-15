@@ -39,9 +39,11 @@ describe('Worker', () => {
 
     beforeEach(() => {
         mockKodiak = {
-            connection: {},
+            connection: {
+                duplicate: jest.fn().mockReturnValue({ quit: jest.fn() }),
+            },
             prefix: 'kodiak-test',
-        } as Kodiak;
+        } as unknown as Kodiak;
         processor = jest.fn() as jest.MockedFunction<(job: unknown) => Promise<void>>;
 
         (FetchJobUseCase as unknown as jest.Mock).mockClear();
@@ -192,11 +194,15 @@ describe('Worker', () => {
         anyWorker.isRunning = true;
         anyWorker.activeJobs = 1;
         
+        mockFetchExecute.mockClear();
         const spy = jest.spyOn(global, 'setTimeout');
         
         anyWorker.processNext();
         
-        expect(spy).toHaveBeenCalledWith(expect.any(Function), 100);
+        // Should NOT wait (no backoff anymore)
+        expect(spy).not.toHaveBeenCalled();
+        // Should NOT fetch (max concurrency reached)
+        expect(mockFetchExecute).not.toHaveBeenCalled();
         
         anyWorker.isRunning = false;
     });
