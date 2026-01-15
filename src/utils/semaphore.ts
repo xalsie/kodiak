@@ -17,9 +17,9 @@ export class Semaphore {
     }
 
     public release(): void {
-        if (this.waiters.length > 0) {
-            const resolve = this.waiters.shift();
-            if (resolve) resolve();
+        const resolve = this.waiters.shift();
+        if (resolve) {
+            resolve();
         } else {
             this.permits++;
         }

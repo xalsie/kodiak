@@ -11,6 +11,10 @@ export interface Job<T> {
     failedAt?: Date;
     retryCount: number;
     maxAttempts: number;
+    backoff?: {
+        type: 'fixed' | 'exponential';
+        delay: number;
+    };
     error?: string;
     processedAt?: Date;
 }

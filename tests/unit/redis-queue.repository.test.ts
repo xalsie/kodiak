@@ -42,6 +42,22 @@ describe('Unit: RedisQueueRepository', () => {
         expect(result).toBeNull();
     });
 
+    it('should return null if brpop times out', async () => {
+        (mockRedis.eval as jest.Mock).mockResolvedValue(null as never);
+        const brpopMock = jest.fn().mockResolvedValue(null as never);
+        mockRedis.brpop = brpopMock as Redis['brpop'];
+
+        const result = await repository.fetchNext(2);
+
+        expect(brpopMock).toHaveBeenCalledWith(expect.stringContaining(':notify'), 2);
+        expect(result).toBeNull();
+    });
+
+    it('should ignore timeout if <= 0', async () => {
+        await repository.fetchNext(0);
+        expect(mockRedis.eval).toHaveBeenCalled(); // Should proceed to moveJob directly
+    });
+
     it('should use Lua script to mark job as completed', async () => {
         const jobId = 'job-123';
         const completedAt = new Date();
@@ -67,12 +83,68 @@ describe('Unit: RedisQueueRepository', () => {
 
         expect(mockRedis.eval).toHaveBeenCalledWith(
             expect.any(String), // The script content
-            2,
+            3,
             expect.stringContaining(':active'),
             expect.stringContaining(`:jobs:${jobId}`),
+            expect.stringContaining(':delayed'),
             jobId,
             errorMsg,
             String(failedAt.getTime())
+        );
+    });
+
+    it('should pass backoff options to Lua script when adding a job', async () => {
+        const job = {
+            id: 'job-with-backoff',
+            data: { foo: 'bar' },
+            priority: 1,
+            retryCount: 0,
+            maxAttempts: 3,
+            addedAt: new Date(),
+            status: 'waiting' as const,
+            backoff: {
+                type: 'exponential' as const,
+                delay: 5000
+            }
+        };
+
+        await repository.add(job, 1, false);
+
+        expect(mockRedis.eval).toHaveBeenCalledWith(
+            expect.any(String),
+            4,
+            expect.stringContaining(':waiting'),
+            expect.stringContaining(':delayed'),
+            expect.stringContaining(`:jobs:${job.id}`),
+            expect.stringContaining(':notify'),
+            job.id,
+            '1',
+            '0',
+            'data', JSON.stringify(job.data),
+            'priority', String(job.priority),
+            'retry_count', String(job.retryCount),
+            'max_attempts', String(job.maxAttempts),
+            'added_at', String(job.addedAt.getTime()),
+            'backoff_type', 'exponential',
+            'backoff_delay', '5000'
+        );
+    });
+
+    it('should call promoteDelayedJobs Lua script', async () => {
+        (mockRedis.eval as jest.Mock).mockResolvedValue(5 as never); // 5 jobs promoted
+
+        const count = await repository.promoteDelayedJobs(100);
+
+        expect(count).toBe(5);
+        expect(mockRedis.eval).toHaveBeenCalledWith(
+            expect.any(String),
+            4,
+            expect.stringContaining(':delayed'),
+            expect.stringContaining(':waiting'),
+            expect.stringContaining(':notify'),
+            expect.stringContaining(':jobs:'),
+            expect.any(String), // timestamp
+            '100' // limit
         );
     });
 });

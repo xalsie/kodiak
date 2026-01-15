@@ -185,26 +185,110 @@ describe('Worker', () => {
         await worker.stop();
     });
 
-    it('should respect concurrency limit', () => {
+    it('should respect semaphore concurrency (prefetch logic)', async () => {
+        // Concurrency 1, Prefetch 1 => 2 Fetchers.
+        const worker = new Worker('test-queue', processor, mockKodiak, { concurrency: 1, prefetch: 1 });
+
+        const job1: Job<unknown> = {
+            id: 'job-1',
+            data: { id: 1 },
+            status: 'active',
+            priority: 10,
+            addedAt: new Date(),
+            retryCount: 0,
+            maxAttempts: 3,
+        };
+        const job2: Job<unknown> = {
+            id: 'job-2',
+            data: { id: 2 },
+            status: 'active',
+            priority: 10,
+            addedAt: new Date(),
+            retryCount: 0,
+            maxAttempts: 3,
+        };
+
+        mockFetchExecute
+            .mockResolvedValueOnce(job1 as never)
+            .mockResolvedValueOnce(job2 as never)
+            .mockResolvedValue(null as never);
+
+        let releaseJob1: (value: void) => void = () => {};
+        const job1Blocker = new Promise<void>((resolve) => {
+            releaseJob1 = resolve;
+        });
+
+        processor.mockImplementation(async (data: unknown) => {
+            if ((data as { id: number }).id === 1) {
+                await job1Blocker;
+            }
+        });
+
+        await worker.start();
+
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        expect(processor).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }));
+        expect(processor).not.toHaveBeenCalledWith(expect.objectContaining({ id: 2 }));
+
+        releaseJob1();
+
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        expect(processor).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }));
+
+        await worker.stop();
+    });
+
+    it('should not process if slot index is invalid', () => {
+        const worker = new Worker('test-queue', processor, mockKodiak);
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const anyWorker = worker as any;
+
+        anyWorker.isRunning = true;
+        anyWorker.processNext(999);
+
+        expect(mockFetchExecute).not.toHaveBeenCalled();
+    });
+
+    it('should handle missing semaphore (defensive programming)', async () => {
+        const worker = new Worker('test-queue', processor, mockKodiak);
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const anyWorker = worker as any;
+
+        anyWorker.isRunning = true;
+        anyWorker.activeJobs = 0;
+        anyWorker.processingSemaphore = null; 
+
+        const mockJob = { id: 'j1', data: {}, status: 'active', priority: 1, addedAt: new Date(), retryCount: 0, maxAttempts: 1 };
+        mockFetchExecute.mockResolvedValueOnce(mockJob as never);
+        
+        processor.mockResolvedValue(undefined);
+
+        anyWorker.fetchJobUseCases = [{ execute: mockFetchExecute }];
+        
+        await anyWorker.processNext(0);
+
+        // Wait for microtasks/promises to settle
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        expect(processor).toHaveBeenCalled();
+        expect(mockCompleteExecute).toHaveBeenCalled();
+    });
+
+    it('should abort if fetchJobUseCases exceeds totalSlots (defensive check)', () => {
         const worker = new Worker('test-queue', processor, mockKodiak, { concurrency: 1 });
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const anyWorker = worker as any;
 
         anyWorker.isRunning = true;
-        anyWorker.activeJobs = 1;
-        
-        mockFetchExecute.mockClear();
-        const spy = jest.spyOn(global, 'setTimeout');
-        
-        anyWorker.processNext();
-        
-        // Should NOT wait (no backoff anymore)
-        expect(spy).not.toHaveBeenCalled();
-        // Should NOT fetch (max concurrency reached)
+        anyWorker.fetchJobUseCases = [{}, {}, {}]; 
+        anyWorker.processNext(0);
+
         expect(mockFetchExecute).not.toHaveBeenCalled();
-        
-        anyWorker.isRunning = false;
     });
 
     it('should handle non-Error objects thrown by processor', async () => {
