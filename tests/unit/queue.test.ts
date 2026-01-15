@@ -92,14 +92,12 @@ describe('Unit: Queue', () => {
 
     it('should ignore startScheduler if already running', () => {
         const queue = new Queue('test-queue', mockKodiak);
-        // @ts-ignore
-        const intervalBefore = queue.schedulerInterval;
-        
-        // @ts-ignore
-        queue.startScheduler();
 
-        // @ts-ignore
-        const intervalAfter = queue.schedulerInterval;
+        const intervalBefore = (queue as unknown as { schedulerInterval: NodeJS.Timeout | null }).schedulerInterval;
+
+        (queue as unknown as { startScheduler: () => void }).startScheduler();
+
+        const intervalAfter = (queue as unknown as { schedulerInterval: NodeJS.Timeout | null }).schedulerInterval;
 
         expect(intervalBefore).toBe(intervalAfter);
         

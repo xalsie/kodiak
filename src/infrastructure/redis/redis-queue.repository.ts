@@ -82,7 +82,7 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
         }
 
         const now = Date.now();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
         const result = (await this.connection.eval(
             this.moveJobScript,
             2,

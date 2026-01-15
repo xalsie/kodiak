@@ -45,7 +45,7 @@ describe('Unit: RedisQueueRepository', () => {
     it('should return null if brpop times out', async () => {
         (mockRedis.eval as jest.Mock).mockResolvedValue(null as never);
         const brpopMock = jest.fn().mockResolvedValue(null as never);
-        mockRedis.brpop = brpopMock;
+        mockRedis.brpop = brpopMock as Redis['brpop'];
 
         const result = await repository.fetchNext(2);
 
@@ -101,9 +101,9 @@ describe('Unit: RedisQueueRepository', () => {
             retryCount: 0,
             maxAttempts: 3,
             addedAt: new Date(),
-            status: 'waiting',
+            status: 'waiting' as const,
             backoff: {
-                type: 'exponential',
+                type: 'exponential' as const,
                 delay: 5000
             }
         };

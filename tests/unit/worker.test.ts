@@ -218,8 +218,8 @@ describe('Worker', () => {
             releaseJob1 = resolve;
         });
 
-        processor.mockImplementation(async (data: any) => {
-            if (data.id === 1) {
+        processor.mockImplementation(async (data: unknown) => {
+            if ((data as { id: number }).id === 1) {
                 await job1Blocker;
             }
         });
@@ -242,33 +242,34 @@ describe('Worker', () => {
 
     it('should not process if slot index is invalid', () => {
         const worker = new Worker('test-queue', processor, mockKodiak);
-        // @ts-ignore
-        worker.isRunning = true;
-        // @ts-ignore
-        worker.processNext(999); 
-        
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const anyWorker = worker as any;
+
+        anyWorker.isRunning = true;
+        anyWorker.processNext(999);
+
         expect(mockFetchExecute).not.toHaveBeenCalled();
     });
 
     it('should handle missing semaphore (defensive programming)', async () => {
         const worker = new Worker('test-queue', processor, mockKodiak);
-        // @ts-ignore
-        worker.isRunning = true;
-        // @ts-ignore
-        worker.activeJobs = 0;
-        // @ts-ignore
-        worker.processingSemaphore = null; 
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const anyWorker = worker as any;
+
+        anyWorker.isRunning = true;
+        anyWorker.activeJobs = 0;
+        anyWorker.processingSemaphore = null; 
 
         const mockJob = { id: 'j1', data: {}, status: 'active', priority: 1, addedAt: new Date(), retryCount: 0, maxAttempts: 1 };
-        mockFetchExecute.mockResolvedValueOnce(mockJob);
+        mockFetchExecute.mockResolvedValueOnce(mockJob as never);
         
         processor.mockResolvedValue(undefined);
 
-        // @ts-ignore
-        worker.fetchJobUseCases = [{ execute: mockFetchExecute }];
+        anyWorker.fetchJobUseCases = [{ execute: mockFetchExecute }];
         
-        // @ts-ignore
-        await worker.processNext(0);
+        await anyWorker.processNext(0);
 
         // Wait for microtasks/promises to settle
         await new Promise(resolve => setTimeout(resolve, 100));
@@ -278,16 +279,16 @@ describe('Worker', () => {
     });
 
     it('should abort if fetchJobUseCases exceeds totalSlots (defensive check)', () => {
-         const worker = new Worker('test-queue', processor, mockKodiak, { concurrency: 1 });
-         // @ts-ignore
-         worker.isRunning = true;
-         // @ts-ignore
-         worker.fetchJobUseCases = [{}, {}, {}]; 
+        const worker = new Worker('test-queue', processor, mockKodiak, { concurrency: 1 });
 
-         // @ts-ignore
-         worker.processNext(0);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const anyWorker = worker as any;
 
-         expect(mockFetchExecute).not.toHaveBeenCalled();
+        anyWorker.isRunning = true;
+        anyWorker.fetchJobUseCases = [{}, {}, {}]; 
+        anyWorker.processNext(0);
+
+        expect(mockFetchExecute).not.toHaveBeenCalled();
     });
 
     it('should handle non-Error objects thrown by processor', async () => {
