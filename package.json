@@ -3,8 +3,7 @@
     "version": "1.0.2",
     "description": "Kodiak: The heavy-duty job queue that mauls latency. Native TypeScript & Lua.",
     "publishConfig": {
-        "registry": "https://registry.npmjs.org/",
-        "access": "public"
+        "registry": "https://npm.pkg.github.com/"
     },
     "keywords": [
         "TypeScript",
@@ -17,8 +16,8 @@
         "url": "https://github.com/xalsie/kodiak/issues"
     },
     "repository": {
-        "type": "npm",
-        "url": "https://registry.npmjs.org/legrizzly/kodiak"
+        "type": "git",
+        "url": "git+https://github.com/xalsie/kodiak.git"
     },
     "license": "ISC",
     "author": "LeGrizzly",

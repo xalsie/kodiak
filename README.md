@@ -12,10 +12,17 @@
   </table>
   <br />
   <div>
-    <img src="https://img.shields.io/badge/written%20in-TypeScript-3178C6?style=flat-square&logo=typescript" alt="TypeScript" />
-    <img src="https://img.shields.io/badge/powered%20by-Lua-000080?style=flat-square&logo=lua" alt="Lua" />
-    <img src="https://img.shields.io/badge/optimized%20for-DragonflyDB-ff0000?style=flat-square" alt="DragonflyDB" />
-    <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License" />
+    <a href="https://discord.gg/vMaSpKUS4J"><img src="https://img.shields.io/badge/Join-Discord-3178C6?style=flat-round&logo=discord" alt="discord"></a>
+  </div>
+  <div>
+    <img src="https://img.shields.io/badge/written%20in-TypeScript-3178C6?style=flat-round&logo=typescript" alt="TypeScript" />
+    <img src="https://img.shields.io/badge/powered%20by-Lua-000080?style=flat-round&logo=lua" alt="Lua" />
+    <img src="https://img.shields.io/badge/optimized%20for-DragonflyDB-ff0000?style=flat-round&logo=redis" alt="DragonflyDB" />
+    <img src="https://img.shields.io/badge/license-MIT-green?style=flat-round" alt="License" />
+  </div>
+  <div>
+    <img src="https://img.shields.io/npm/v/@legrizzly/kodiak.svg?style=flat-round" alt="Npm Version" />
+    <img src="https://github.com/xalsie/kodiak/actions/workflows/test-coverage.yml/badge.svg" alt="coverage" />
   </div>
   <br/>
 </div>
