@@ -32,7 +32,6 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
         this.jobKeyPrefix = `${prefix}:jobs:`;
 
         // Load Lua scripts
-        // Note: In production, ensure these files are copied to dist/
         this.addJobScript = fs.readFileSync(path.join(__dirname, 'lua', 'add_job.lua'), 'utf8');
         this.moveJobScript = fs.readFileSync(path.join(__dirname, 'lua', 'move_job.lua'), 'utf8');
         this.completeJobScript = fs.readFileSync(path.join(__dirname, 'lua', 'complete_job.lua'), 'utf8');
@@ -61,6 +60,14 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
             jobFields.push('backoff_delay', String(job.backoff.delay));
         }
 
+        if (job.repeat) {
+            jobFields.push('repeat_every', String(job.repeat.every));
+            jobFields.push('repeat_count', String(job.repeat.count));
+            if (job.repeat.limit) {
+                jobFields.push('repeat_limit', String(job.repeat.limit));
+            }
+        }
+
         await this.connection.eval(
             this.addJobScript,
             4,
@@ -76,38 +83,60 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
     }
 
     async fetchNext(timeout?: number): Promise<Job<T> | null> {
-        if (timeout && timeout > 0) {
-            const result = await this.connection.brpop(this.notificationQueueKey, timeout);
-            if (!result) return null;
+        const now = Date.now();
+
+        const optimisticResult = (await this.connection.eval(
+            this.moveJobScript,
+            3,
+            this.waitingQueueKey,
+            this.activeQueueKey,
+            this.notificationQueueKey,
+            String(now),
+            this.jobKeyPrefix,
+            '1'
+        )) as [string, string[] | null] | null;
+
+        if (optimisticResult) {
+            return this.processFetchResult(optimisticResult, now);
         }
 
-        const now = Date.now();
+        if (timeout && timeout > 0) {
+            const popResult = await this.connection.brpop(this.notificationQueueKey, timeout);
+            if (!popResult) return null;
+        } else {
+            return null;
+        }
 
         const result = (await this.connection.eval(
             this.moveJobScript,
-            2,
+            3,
             this.waitingQueueKey,
             this.activeQueueKey,
+            this.notificationQueueKey,
             String(now),
             this.jobKeyPrefix,
+            '0'
         )) as [string, string[] | null] | null;
 
-        if (!result) return null;
+        if (result) {
+            return this.processFetchResult(result, now);
+        }
 
+        return null;
+    }
+
+    private async processFetchResult(result: [string, string[] | null], now: number): Promise<Job<T> | null> {
         const [jobId, rawData] = result;
         const jobKey = `${this.jobKeyPrefix}${jobId}`;
 
         let jobData: Record<string, string>;
 
         if (rawData) {
-            // Optimization success: Data fetched in Lua
             jobData = {};
             for (let i = 0; i < rawData.length; i += 2) {
                 jobData[rawData[i]] = rawData[i + 1];
             }
         } else {
-            // Fallback: Lua couldn't access key, do it in Node
-            // Pipeline the update and the fetch for performance
             const results = await this.connection
                 .pipeline()
                 .hset(jobKey, 'state', 'active', 'started_at', now)
@@ -116,7 +145,6 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
 
             if (!results) return null;
 
-            // results[1] is the result of hgetall. It is [error, data]
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const [err, data] = results[1] as [Error | null, any];
 
@@ -126,7 +154,6 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
 
         if (!jobData.data) return null;
 
-        // Parse the job data (now stored as separate fields)
         const jobEntity: Job<T> = {
             id: jobId,
             data: JSON.parse(jobData.data),
@@ -135,7 +162,6 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
             retryCount: Number(jobData.retry_count),
             maxAttempts: Number(jobData.max_attempts),
             addedAt: new Date(Number(jobData.added_at)),
-            // started_at is set by move_job.lua
             startedAt: jobData.started_at ? new Date(Number(jobData.started_at)) : new Date(now),
         };
 
@@ -147,15 +173,16 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
         
         await this.connection.eval(
             this.completeJobScript,
-            2,
+            3,
             this.activeQueueKey,
             jobKey,
+            this.delayedQueueKey,
             jobId,
             String(completedAt.getTime())
         );
     }
 
-    async markAsFailed(jobId: string, error: string, failedAt: Date): Promise<void> {
+    async markAsFailed(jobId: string, error: string, failedAt: Date, nextAttempt?: Date): Promise<void> {
         const jobKey = `${this.jobKeyPrefix}${jobId}`;
         
         await this.connection.eval(
@@ -166,7 +193,8 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
             this.delayedQueueKey,
             jobId,
             error,
-            String(failedAt.getTime())
+            String(failedAt.getTime()),
+            nextAttempt ? String(nextAttempt.getTime()) : '-1'
         );
     }
 

@@ -15,6 +15,11 @@ export interface Job<T> {
         type: 'fixed' | 'exponential';
         delay: number;
     };
+    repeat?: {
+        every: number;
+        limit?: number;
+        count: number;
+    };
     error?: string;
     processedAt?: Date;
 }

@@ -51,7 +51,10 @@ describe('Worker', () => {
         (FailJobUseCase as unknown as jest.Mock).mockClear();
 
         mockFetchExecute.mockReset();
-        mockFetchExecute.mockResolvedValue(null as never);
+        mockFetchExecute.mockImplementation(async () => {
+            await new Promise(resolve => setTimeout(resolve, 10)); // Simulate Redis latency/blocking
+            return null;
+        });
 
         mockCompleteExecute.mockReset();
         mockCompleteExecute.mockResolvedValue(undefined as never);
@@ -210,8 +213,7 @@ describe('Worker', () => {
 
         mockFetchExecute
             .mockResolvedValueOnce(job1 as never)
-            .mockResolvedValueOnce(job2 as never)
-            .mockResolvedValue(null as never);
+            .mockResolvedValueOnce(job2 as never);
 
         let releaseJob1: (value: void) => void = () => {};
         const job1Blocker = new Promise<void>((resolve) => {
@@ -271,7 +273,6 @@ describe('Worker', () => {
         
         await anyWorker.processNext(0);
 
-        // Wait for microtasks/promises to settle
         await new Promise(resolve => setTimeout(resolve, 100));
 
         expect(processor).toHaveBeenCalled();

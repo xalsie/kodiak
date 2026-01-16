@@ -39,7 +39,6 @@ describe('Integration: RedisQueueRepository', () => {
             retryCount: 0,
             maxAttempts: 1,
         };
-        // Logic from UseCase (duplicated here for direct repo testing)
         const score = priority * 10000000000000 + (Date.now() + delay);
         return { job, score };
     };
@@ -81,7 +80,6 @@ describe('Integration: RedisQueueRepository', () => {
         const fetched = await repository.fetchNext();
         expect(fetched).toBeNull();
 
-        // Check it is in delayed ZSET
         const delayedScore = await redis.zscore(
             `${prefix}:queue:${queueName}:delayed`,
             'delayed-1',
@@ -134,31 +132,55 @@ describe('Integration: RedisQueueRepository', () => {
     });
 
     it('should retry a job if maxAttempts > 1', async () => {
-        // createJob sets retryCount: 0, maxAttempts: 1 by default
         const { job, score } = createJob('job-retry', 10, 0);
-        job.maxAttempts = 2; // Allow 1 retry (2 attempts total)
+        job.maxAttempts = 2;
         await repository.add(job, score, false);
 
-        await repository.fetchNext(); // Fetch it (Active)
+        await repository.fetchNext();
 
         const failedAt = new Date();
         const errorMsg = 'First failure';
         await repository.markAsFailed('job-retry', errorMsg, failedAt);
 
-        // Should be in delayed queue, not failed
         const state = await redis.hget(`${prefix}:jobs:job-retry`, 'state');
         expect(state).toBe('delayed');
 
         const retryCount = await redis.hget(`${prefix}:jobs:job-retry`, 'retry_count');
         expect(retryCount).toBe('1');
 
-        // Should NOT be in active queue
         const activeCount = await redis.llen(`${prefix}:queue:${queueName}:active`);
         expect(activeCount).toBe(0);
 
-        // Should be in delayed ZSET
         const delayedScore = await redis.zscore(`${prefix}:queue:${queueName}:delayed`, 'job-retry');
         expect(delayedScore).not.toBeNull();
+    });
+
+    it('should reschedule a recurring job upon completion', async () => {
+        const { job, score } = createJob('job-recurring', 10, 0);
+        job.repeat = { every: 1000, count: 0, limit: 3 };
+        
+        await repository.add(job, score, false);
+
+        await repository.fetchNext(); // Active
+        await repository.markAsCompleted('job-recurring', new Date());
+
+        let state = await redis.hget(`${prefix}:jobs:job-recurring`, 'state');
+        expect(state).toBe('delayed');
+        const repeatCount = await redis.hget(`${prefix}:jobs:job-recurring`, 'repeat_count');
+        expect(repeatCount).toBe('1');
+
+        const delayedScore = await redis.zscore(`${prefix}:queue:${queueName}:delayed`, 'job-recurring');
+        expect(delayedScore).not.toBeNull();
+
+        await redis.hset(`${prefix}:jobs:job-recurring`, 'repeat_count', '2');
+
+        await redis.zrem(`${prefix}:queue:${queueName}:delayed`, 'job-recurring');
+        await redis.lpush(`${prefix}:queue:${queueName}:active`, 'job-recurring');
+
+        await repository.markAsCompleted('job-recurring', new Date());
+
+        state = await redis.hget(`${prefix}:jobs:job-recurring`, 'state');
+        expect(state).toBe('completed');
     });
 
     it('should return null if job data is missing (corrupted state)', async () => {

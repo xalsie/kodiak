@@ -55,7 +55,7 @@ describe('Unit: RedisQueueRepository', () => {
 
     it('should ignore timeout if <= 0', async () => {
         await repository.fetchNext(0);
-        expect(mockRedis.eval).toHaveBeenCalled(); // Should proceed to moveJob directly
+        expect(mockRedis.eval).toHaveBeenCalled();
     });
 
     it('should use Lua script to mark job as completed', async () => {
@@ -65,10 +65,11 @@ describe('Unit: RedisQueueRepository', () => {
         await repository.markAsCompleted(jobId, completedAt);
 
         expect(mockRedis.eval).toHaveBeenCalledWith(
-            expect.any(String), // The script content (mocked as 'return 1')
-            2,
+            expect.any(String),
+            3,
             expect.stringContaining(':active'),
             expect.stringContaining(`:jobs:${jobId}`),
+            expect.stringContaining(':delayed'),
             jobId,
             String(completedAt.getTime())
         );
@@ -82,14 +83,15 @@ describe('Unit: RedisQueueRepository', () => {
         await repository.markAsFailed(jobId, errorMsg, failedAt);
 
         expect(mockRedis.eval).toHaveBeenCalledWith(
-            expect.any(String), // The script content
+            expect.any(String),
             3,
             expect.stringContaining(':active'),
             expect.stringContaining(`:jobs:${jobId}`),
             expect.stringContaining(':delayed'),
             jobId,
             errorMsg,
-            String(failedAt.getTime())
+            String(failedAt.getTime()),
+            '-1'
         );
     });
 
@@ -131,7 +133,7 @@ describe('Unit: RedisQueueRepository', () => {
     });
 
     it('should call promoteDelayedJobs Lua script', async () => {
-        (mockRedis.eval as jest.Mock).mockResolvedValue(5 as never); // 5 jobs promoted
+        (mockRedis.eval as jest.Mock).mockResolvedValue(5 as never);
 
         const count = await repository.promoteDelayedJobs(100);
 
@@ -143,8 +145,8 @@ describe('Unit: RedisQueueRepository', () => {
             expect.stringContaining(':waiting'),
             expect.stringContaining(':notify'),
             expect.stringContaining(':jobs:'),
-            expect.any(String), // timestamp
-            '100' // limit
+            expect.any(String),
+            '100'
         );
     });
 });

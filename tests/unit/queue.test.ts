@@ -1,6 +1,5 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 
-// Mock AddJobUseCase
 const mockExecute = jest.fn();
 jest.unstable_mockModule('../../src/application/use-cases/add-job.use-case.js', () => ({
     AddJobUseCase: jest.fn().mockImplementation(() => ({
@@ -8,7 +7,6 @@ jest.unstable_mockModule('../../src/application/use-cases/add-job.use-case.js', 
     }))
 }));
 
-// Mock RedisQueueRepository
 const mockPromoteDelayedJobs = jest.fn().mockResolvedValue(0 as never);
 jest.unstable_mockModule('../../src/infrastructure/redis/redis-queue.repository.js', () => ({
     RedisQueueRepository: jest.fn().mockImplementation(() => ({
@@ -17,7 +15,6 @@ jest.unstable_mockModule('../../src/infrastructure/redis/redis-queue.repository.
     }))
 }));
 
-// Import Queue after mocks
 const { Queue } = await import('../../src/presentation/queue.js');
 import { Kodiak } from '../../src/presentation/kodiak.js';
 
@@ -40,12 +37,10 @@ describe('Unit: Queue', () => {
     it('should start a scheduler that calls promoteDelayedJobs periodically', async () => {
         const queue = new Queue('test-queue', mockKodiak);
 
-        // Advance time by 5 seconds
         jest.advanceTimersByTime(5000);
 
         expect(mockPromoteDelayedJobs).toHaveBeenCalledTimes(1);
 
-        // Advance time by another 5 seconds
         jest.advanceTimersByTime(5000);
 
         expect(mockPromoteDelayedJobs).toHaveBeenCalledTimes(2);
@@ -56,13 +51,11 @@ describe('Unit: Queue', () => {
     it('should stop the scheduler when closed', async () => {
         const queue = new Queue('test-queue', mockKodiak);
 
-        // Advance time
         jest.advanceTimersByTime(5000);
         expect(mockPromoteDelayedJobs).toHaveBeenCalledTimes(1);
 
         await queue.close();
 
-        // Advance time again - should not call anymore
         jest.advanceTimersByTime(10000);
         expect(mockPromoteDelayedJobs).toHaveBeenCalledTimes(1);
     });
@@ -73,11 +66,8 @@ describe('Unit: Queue', () => {
 
         const queue = new Queue('test-queue', mockKodiak);
         
-        // Advance time to trigger scheduler
         jest.advanceTimersByTime(5000);
         
-        // Wait for the promise to resolve/reject (handled by async/await in setInterval)
-        // Since setInterval call is async void, we might need a small tick
         await Promise.resolve();
 
         expect(mockPromoteDelayedJobs).toHaveBeenCalled();
