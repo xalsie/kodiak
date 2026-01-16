@@ -37,7 +37,10 @@ export class Worker<T> extends EventEmitter {
         );
 
         this.completeJobUseCase = new CompleteJobUseCase<T>(ackQueueRepository);
-        this.failJobUseCase = new FailJobUseCase<T>(ackQueueRepository);
+        this.failJobUseCase = new FailJobUseCase<T>(
+            ackQueueRepository,
+            opts?.backoffStrategies
+        );
     }
 
     /**
@@ -138,7 +141,7 @@ export class Worker<T> extends EventEmitter {
                         this.emit('completed', job);
                     } catch (error) {
                         const err = error instanceof Error ? error : new Error(String(error));
-                        await this.failJobUseCase.execute(job.id, err);
+                        await this.failJobUseCase.execute(job, err);
                         job.status = 'failed';
                         job.failedAt = new Date();
                         job.error = err.message;
@@ -159,8 +162,8 @@ export class Worker<T> extends EventEmitter {
                     return;
                 }
                 
-                this.emit('error', error);
                 this.slotErrors[slotIndex]++;
+                this.emit('error', error);
             })
             .finally(() => {
                 if (this.isRunning) {
@@ -169,9 +172,8 @@ export class Worker<T> extends EventEmitter {
                         const delay = Math.min(1000 * Math.pow(2, errorCount - 1), 30000);
                         setTimeout(() => this.processNext(slotIndex), delay);
                     } else {
-                        // Optimization: Use direct call instead of setImmediate for maximum throughput
-                        // fetchNext is async/IO-bound so this won't overflow stack
-                        this.processNext(slotIndex);
+                        // Use setImmediate to avoid stack overflow and allow GC
+                        setImmediate(() => this.processNext(slotIndex));
                     }
                 }
             });
