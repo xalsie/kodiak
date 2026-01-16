@@ -2,6 +2,7 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { FailJobUseCase } from '../../src/application/use-cases/fail-job.use-case.js';
 import type { IQueueRepository } from '../../src/domain/repositories/queue.repository.js';
 import type { Job } from '../../src/domain/entities/job.entity.js';
+import { BackoffStrategy } from '../../src/domain/strategies/backoff.strategy.js';
 
 describe('FailJobUseCase', () => {
     let failJobUseCase: FailJobUseCase<unknown>;
@@ -32,12 +33,13 @@ describe('FailJobUseCase', () => {
         const job = createMockJob();
         const error = new Error('Job processing failed');
         
-        await failJobUseCase.execute(job.id, error);
+        await failJobUseCase.execute(job, error);
 
         expect(mockQueueRepository.markAsFailed).toHaveBeenCalledWith(
             job.id,
             'Job processing failed',
-            expect.any(Date)
+            expect.any(Date),
+            undefined // nextAttempt
         );
     });
 
@@ -51,12 +53,13 @@ describe('FailJobUseCase', () => {
         const now = Date.now();
         jest.useFakeTimers({ now });
 
-        await failJobUseCase.execute(job.id, error);
+        await failJobUseCase.execute(job, error);
 
         expect(mockQueueRepository.markAsFailed).toHaveBeenCalledWith(
             job.id,
             error.message,
-            expect.any(Date)
+            expect.any(Date),
+            new Date(now + 1000)
         );
 
         jest.useRealTimers();
@@ -73,21 +76,67 @@ describe('FailJobUseCase', () => {
         const now = Date.now();
         jest.useFakeTimers({ now });
 
-        await failJobUseCase.execute(job1.id, new Error('E1'));
+        await failJobUseCase.execute(job1, new Error('E1'));
         expect(mockQueueRepository.markAsFailed).toHaveBeenLastCalledWith(
-            job1.id, 'E1', expect.any(Date)
+            job1.id, 'E1', expect.any(Date), new Date(now + 1000)
         );
 
-        await failJobUseCase.execute(job2.id, new Error('E2'));
+        await failJobUseCase.execute(job2, new Error('E2'));
         expect(mockQueueRepository.markAsFailed).toHaveBeenLastCalledWith(
-            job2.id, 'E2', expect.any(Date)
+            job2.id, 'E2', expect.any(Date), new Date(now + 2000)
         );
 
-        await failJobUseCase.execute(job3.id, new Error('E3'));
+        await failJobUseCase.execute(job3, new Error('E3'));
         expect(mockQueueRepository.markAsFailed).toHaveBeenLastCalledWith(
-            job3.id, 'E3', expect.any(Date)
+            job3.id, 'E3', expect.any(Date), new Date(now + 4000)
         );
 
         jest.useRealTimers();
+    });
+
+    it('should use custom backoff strategy if provided', async () => {
+        const customStrategy: BackoffStrategy = (attempts, delay) => {
+            return delay * attempts * 10; // Custom logic
+        };
+
+        failJobUseCase = new FailJobUseCase(mockQueueRepository, {
+            'custom-linear': customStrategy
+        });
+
+        // Retry 1: 100 * 1 * 10 = 1000
+        const job = createMockJob({ 
+            retryCount: 0, 
+            backoff: { type: 'custom-linear', delay: 100 } 
+        });
+
+        const now = Date.now();
+        jest.useFakeTimers({ now });
+
+        await failJobUseCase.execute(job, new Error('E'));
+
+        expect(mockQueueRepository.markAsFailed).toHaveBeenCalledWith(
+            job.id,
+            'E',
+            expect.any(Date),
+            new Date(now + 1000)
+        );
+
+        jest.useRealTimers();
+    });
+
+    it('should fallback to default behavior (no nextAttempt) if custom strategy not found', async () => {
+        const job = createMockJob({ 
+            retryCount: 0, 
+            backoff: { type: 'unknown-strategy', delay: 100 } 
+        });
+
+        await failJobUseCase.execute(job, new Error('E'));
+
+        expect(mockQueueRepository.markAsFailed).toHaveBeenCalledWith(
+            job.id,
+            'E',
+            expect.any(Date),
+            undefined
+        );
     });
 });
