@@ -39,6 +39,7 @@ export class Worker<T> extends EventEmitter {
         this.completeJobUseCase = new CompleteJobUseCase<T>(ackQueueRepository);
         this.failJobUseCase = new FailJobUseCase<T>(
             ackQueueRepository,
+            opts?.backoffStrategies
         );
     }
 
@@ -140,7 +141,7 @@ export class Worker<T> extends EventEmitter {
                         this.emit('completed', job);
                     } catch (error) {
                         const err = error instanceof Error ? error : new Error(String(error));
-                        await this.failJobUseCase.execute(job.id, err);
+                        await this.failJobUseCase.execute(job, err);
                         job.status = 'failed';
                         job.failedAt = new Date();
                         job.error = err.message;

@@ -157,7 +157,7 @@ describe('Worker', () => {
 
         expect(processor).toHaveBeenCalledWith(mockJob.data);
 
-        expect(mockFailExecute).toHaveBeenCalledWith('job-123', testError);
+        expect(mockFailExecute).toHaveBeenCalledWith(mockJob, testError);
         expect(failedEmitter).toHaveBeenCalledWith(mockJob, testError);
 
         await worker.stop();
@@ -319,7 +319,7 @@ describe('Worker', () => {
         await new Promise(resolve => setTimeout(resolve, 300));
 
         expect(mockFailExecute).toHaveBeenCalledWith(
-            'job-string-error', 
+            mockJob, 
             expect.objectContaining({ message: stringError })
         );
         expect(failedEmitter).toHaveBeenCalledWith(

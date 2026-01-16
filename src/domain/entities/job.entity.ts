@@ -12,7 +12,7 @@ export interface Job<T> {
     retryCount: number;
     maxAttempts: number;
     backoff?: {
-        type: 'fixed' | 'exponential';
+        type: 'fixed' | 'exponential' | string;
         delay: number;
     };
     repeat?: {

@@ -14,6 +14,7 @@ local delayedQueue = KEYS[3]
 local jobId = ARGV[1]
 local errorMsg = ARGV[2]
 local failedAt = tonumber(ARGV[3])
+local forcedNextAttempt = tonumber(ARGV[4]) or -1
 
 -- Get job retry info
 local jobData = redis.call('HMGET', jobKey, 'retry_count', 'max_attempts', 'backoff_type', 'backoff_delay')
@@ -35,14 +36,18 @@ if retryCount < (maxAttempts - 1) then
     local newRetryCount = retryCount + 1
     local nextAttempt = failedAt
 
-    -- Calculate backoff
-    if backoffType == 'fixed' then
-        nextAttempt = failedAt + backoffDelay
-    elseif backoffType == 'exponential' then
-        nextAttempt = failedAt + (backoffDelay * (2 ^ (newRetryCount - 1)))
+    if forcedNextAttempt > 0 then
+        nextAttempt = forcedNextAttempt
     else
-        -- Default to immediate retry or small delay if no backoff specified
-        nextAttempt = failedAt
+        -- Calculate backoff (fallback if not provided by application)
+        if backoffType == 'fixed' then
+            nextAttempt = failedAt + backoffDelay
+        elseif backoffType == 'exponential' then
+            nextAttempt = failedAt + (backoffDelay * (2 ^ (newRetryCount - 1)))
+        else
+            -- Default to immediate retry or small delay if no backoff specified
+            nextAttempt = failedAt
+        end
     end
 
     -- Update job state
