@@ -2,19 +2,24 @@ import { Redis } from 'ioredis';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import type { Job } from '../../domain/entities/job.entity.js';
+import type { Job, JobStatus } from '../../domain/entities/job.entity.js';
 import type { IQueueRepository } from '../../domain/repositories/queue.repository.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export class RedisQueueRepository<T> implements IQueueRepository<T> {
+    private readonly notificationQueueKey: string;
     private readonly waitingQueueKey: string;
     private readonly delayedQueueKey: string;
     private readonly activeQueueKey: string;
     private readonly jobKeyPrefix: string;
     private addJobScript: string;
     private moveJobScript: string;
+    private completeJobScript: string;
+    private failJobScript: string;
+    private promoteDelayedJobsScript: string;
+    private updateProgressScript: string;
 
     constructor(
         private readonly queueName: string,
@@ -24,87 +29,203 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
         this.waitingQueueKey = `${prefix}:queue:${queueName}:waiting`;
         this.delayedQueueKey = `${prefix}:queue:${queueName}:delayed`;
         this.activeQueueKey = `${prefix}:queue:${queueName}:active`;
+        this.notificationQueueKey = `${prefix}:queue:${queueName}:notify`;
         this.jobKeyPrefix = `${prefix}:jobs:`;
 
         // Load Lua scripts
-        // Note: In production, ensure these files are copied to dist/
         this.addJobScript = fs.readFileSync(path.join(__dirname, 'lua', 'add_job.lua'), 'utf8');
         this.moveJobScript = fs.readFileSync(path.join(__dirname, 'lua', 'move_job.lua'), 'utf8');
+        this.completeJobScript = fs.readFileSync(path.join(__dirname, 'lua', 'complete_job.lua'), 'utf8');
+        this.failJobScript = fs.readFileSync(path.join(__dirname, 'lua', 'fail_job.lua'), 'utf8');
+        this.promoteDelayedJobsScript = fs.readFileSync(path.join(__dirname, 'lua', 'promote_delayed_jobs.lua'), 'utf8');
+        this.updateProgressScript = fs.readFileSync(path.join(__dirname, 'lua', 'update_progress.lua'), 'utf8');
     }
 
     async add(job: Job<T>, score: number, isDelayed: boolean): Promise<void> {
         const jobKey = `${this.jobKeyPrefix}${job.id}`;
 
+        const jobFields = [
+            'data',
+            JSON.stringify(job.data),
+            'priority',
+            String(job.priority),
+            'retry_count',
+            String(job.retryCount),
+            'max_attempts',
+            String(job.maxAttempts),
+            'added_at',
+            String(job.addedAt.getTime()),
+        ];
+
+        if (job.backoff) {
+            jobFields.push('backoff_type', job.backoff.type);
+            jobFields.push('backoff_delay', String(job.backoff.delay));
+        }
+
+        if (job.repeat) {
+            jobFields.push('repeat_every', String(job.repeat.every));
+            jobFields.push('repeat_count', String(job.repeat.count));
+            if (job.repeat.limit) {
+                jobFields.push('repeat_limit', String(job.repeat.limit));
+            }
+        }
+
         await this.connection.eval(
             this.addJobScript,
-            3,
+            4,
             this.waitingQueueKey,
             this.delayedQueueKey,
             jobKey,
+            this.notificationQueueKey,
             job.id,
             String(score),
-            JSON.stringify(job),
             isDelayed ? '1' : '0',
+            ...jobFields,
         );
     }
 
-    async fetchNext(): Promise<Job<T> | null> {
+    async fetchNext(timeout?: number): Promise<Job<T> | null> {
         const now = Date.now();
-        const jobId = (await this.connection.eval(
+
+        const optimisticResult = (await this.connection.eval(
             this.moveJobScript,
-            2,
+            3,
             this.waitingQueueKey,
             this.activeQueueKey,
+            this.notificationQueueKey,
             String(now),
-        )) as string | null;
+            this.jobKeyPrefix,
+            '1'
+        )) as [string, string[] | null] | null;
 
-        if (!jobId) return null;
+        if (optimisticResult) {
+            return this.processFetchResult(optimisticResult, now);
+        }
 
+        if (timeout && timeout > 0) {
+            const popResult = await this.connection.brpop(this.notificationQueueKey, timeout);
+            if (!popResult) return null;
+        } else {
+            return null;
+        }
+
+        const result = (await this.connection.eval(
+            this.moveJobScript,
+            3,
+            this.waitingQueueKey,
+            this.activeQueueKey,
+            this.notificationQueueKey,
+            String(now),
+            this.jobKeyPrefix,
+            '0'
+        )) as [string, string[] | null] | null;
+
+        if (result) {
+            return this.processFetchResult(result, now);
+        }
+
+        return null;
+    }
+
+    private async processFetchResult(result: [string, string[] | null], now: number): Promise<Job<T> | null> {
+        const [jobId, rawData] = result;
         const jobKey = `${this.jobKeyPrefix}${jobId}`;
 
-        // Update state manually since we can't do it in Lua (undeclared key issue)
-        // Pipeline the update and the fetch for performance
-        const results = await this.connection
-            .pipeline()
-            .hset(jobKey, 'state', 'active', 'started_at', now)
-            .hgetall(jobKey)
-            .exec();
+        let jobData: Record<string, string>;
 
-        if (!results) return null;
+        if (rawData) {
+            jobData = {};
+            for (let i = 0; i < rawData.length; i += 2) {
+                jobData[rawData[i]] = rawData[i + 1];
+            }
+        } else {
+            const results = await this.connection
+                .pipeline()
+                .hset(jobKey, 'state', 'active', 'started_at', now)
+                .hgetall(jobKey)
+                .exec();
 
-        // results[1] is the result of hgetall. It is [error, data]
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const [err, jobData] = results[1] as [Error | null, any];
+            if (!results) return null;
 
-        if (err || !jobData || !jobData.data) return null;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const [err, data] = results[1] as [Error | null, any];
 
-        // Parse the original job data
-        const jobEntity = JSON.parse(jobData.data) as Job<T>;
+            if (err || !data) return null;
+            jobData = data;
+        }
 
-        // Update status from Redis state (truth)
-        jobEntity.status = 'active';
-        jobEntity.startedAt = new Date(now);
+        if (!jobData.data) return null;
+
+        const jobEntity: Job<T> = {
+            id: jobId,
+            data: JSON.parse(jobData.data),
+            priority: Number(jobData.priority),
+            status: jobData.state as JobStatus,
+            retryCount: Number(jobData.retry_count),
+            maxAttempts: Number(jobData.max_attempts),
+            addedAt: new Date(Number(jobData.added_at)),
+            startedAt: jobData.started_at ? new Date(Number(jobData.started_at)) : new Date(now),
+            progress: jobData.progress ? Number(jobData.progress) : 0,
+            updateProgress: async (progress: number) => {
+                await this.updateProgress(jobId, progress);
+            }
+        };
 
         return jobEntity;
     }
 
     async markAsCompleted(jobId: string, completedAt: Date): Promise<void> {
         const jobKey = `${this.jobKeyPrefix}${jobId}`;
-        // Remove from active queue and update job state to completed
-        await this.connection
-            .pipeline()
-            .lrem(this.activeQueueKey, 1, jobId)
-            .hset(jobKey, 'state', 'completed', 'completed_at', completedAt.getTime())
-            .exec();
+        
+        await this.connection.eval(
+            this.completeJobScript,
+            3,
+            this.activeQueueKey,
+            jobKey,
+            this.delayedQueueKey,
+            jobId,
+            String(completedAt.getTime())
+        );
     }
 
-    async markAsFailed(jobId: string, error: string, failedAt: Date): Promise<void> {
+    async markAsFailed(jobId: string, error: string, failedAt: Date, nextAttempt?: Date): Promise<void> {
         const jobKey = `${this.jobKeyPrefix}${jobId}`;
-        // Remove from active queue and update job state to failed
-        await this.connection
-            .pipeline()
-            .lrem(this.activeQueueKey, 1, jobId)
-            .hset(jobKey, 'state', 'failed', 'failed_at', failedAt.getTime(), 'error', error)
-            .exec();
+        
+        await this.connection.eval(
+            this.failJobScript,
+            3,
+            this.activeQueueKey,
+            jobKey,
+            this.delayedQueueKey,
+            jobId,
+            error,
+            String(failedAt.getTime()),
+            nextAttempt ? String(nextAttempt.getTime()) : '-1'
+        );
+    }
+
+    async promoteDelayedJobs(limit: number = 50): Promise<number> {
+        const now = Date.now();
+        const result = await this.connection.eval(
+            this.promoteDelayedJobsScript,
+            4,
+            this.delayedQueueKey,
+            this.waitingQueueKey,
+            this.notificationQueueKey,
+            this.jobKeyPrefix,
+            String(now),
+            String(limit)
+        );
+        return Number(result);
+    }
+
+    async updateProgress(jobId: string, progress: number): Promise<void> {
+        const jobKey = `${this.jobKeyPrefix}${jobId}`;
+        await this.connection.eval(
+            this.updateProgressScript,
+            1,
+            jobKey,
+            String(progress)
+        );
     }
 }

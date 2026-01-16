@@ -76,6 +76,11 @@ jobs:
       - name: Create .npmrc
         run: echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" > .npmrc
 
+      - name: Configure for GitHub Packages
+        run: |
+          npm pkg set name="@xalsie/kodiak"
+          npm pkg set publishConfig.registry="https://npm.pkg.github.com/"
+
       - name: Semantic Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

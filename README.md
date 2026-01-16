@@ -2,10 +2,10 @@
   <table border="0">
     <tr>
       <td>
-        <img src="logo/logoEmpty.png" width="300" alt="logo kodiak" />
+        <img src="https://raw.githubusercontent.com/xalsie/kodiak/refs/heads/main/logo/logoEmpty.png" width="300" alt="logo kodiak" />
       </td>
       <td align="center">
-        <h1>KODIAK</h1>
+        <h1>KODIAK 🐾</h1>
         <strong>The apex predator of job queues.</strong>
       </td>
     </tr>
@@ -59,7 +59,7 @@ graph LR
 ## 🚀 Installation
 
 ```bash
-npm install kodiak
+npm install @legrizzly/kodiak
 ```
 
 ---
@@ -74,7 +74,13 @@ docker run -p 6379:6379 --ulimit memlock=-1 docker.dragonflydb.io/dragonflydb/dr
 
 ### Producer: Add Jobs
 ```typescript
-import { Kodiak } from 'kodiak';
+import { Kodiak } from '@legrizzly/kodiak';
+import type { Job } from '@legrizzly/kodiak';
+
+interface EmailPayload {
+  to: string;
+  subject: string;
+}
 
 const kodiak = new Kodiak({
   connection: { host: 'localhost', port: 6379 }
@@ -93,15 +99,15 @@ await queue.add('email-1', { to: 'user@example.com', subject: 'Hi!' }, {
 ```typescript
 const worker = kodiak.createWorker(
   'emails',
-  async (jobData) => {
+  async (jobData: EmailPayload) => {
     console.log('Processing:', jobData.to);
     await sendEmail(jobData);
   },
   { concurrency: 5 }  // Up to 5 jobs in parallel
 );
 
-worker.on('completed', (job) => console.log(`✓ Done: ${job.id}`));
-worker.on('failed', (job, err) => console.error(`✗ Failed: ${err.message}`));
+worker.on('completed', (job: Job<EmailPayload>) => console.log(`✓ Done: ${job.id}`));
+worker.on('failed', (job: Job<EmailPayload>, err: Error) => console.error(`✗ Failed: ${err.message}`));
 
 await worker.start();   // Start processing
 await worker.stop();    // Stop gracefully

@@ -37,8 +37,5 @@ jspm_packages/
 # Stores VSCode settings specific to the project
 .vscode/
 
-# Documentation output
-docs/
-
 # TypeScript cache files
 *.tsbuildinfo

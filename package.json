@@ -1,9 +1,10 @@
 {
     "name": "@xalsie/kodiak",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "description": "Kodiak: The heavy-duty job queue that mauls latency. Native TypeScript & Lua.",
     "publishConfig": {
-        "registry": "https://npm.pkg.github.com/"
+        "registry": "https://registry.npmjs.org/",
+        "access": "public"
     },
     "keywords": [
         "TypeScript",
@@ -16,13 +17,18 @@
         "url": "https://github.com/xalsie/kodiak/issues"
     },
     "repository": {
-        "type": "git",
-        "url": "git+https://github.com/xalsie/kodiak.git"
+        "type": "npm",
+        "url": "https://registry.npmjs.org/legrizzly/kodiak"
     },
     "license": "ISC",
     "author": "LeGrizzly",
     "type": "module",
     "main": "dist/presentation/index.js",
+    "types": "dist/presentation/index.d.ts",
+    "files": [
+        "dist",
+        "README.md"
+    ],
     "scripts": {
         "build": "tsc && node -e \"const fs = require('fs'); fs.cpSync('src/infrastructure/redis/lua', 'dist/infrastructure/redis/lua', {recursive: true});\"",
         "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
@@ -32,20 +38,20 @@
         "format": "prettier --write ."
     },
     "dependencies": {
-        "ioredis": "^5.9.1"
+        "ioredis": "^5.9.2"
     },
     "devDependencies": {
         "@semantic-release/changelog": "^6.0.3",
         "@semantic-release/git": "^10.0.1",
         "@types/jest": "^30.0.0",
-        "@types/node": "^25.0.7",
+        "@types/node": "^25.0.9",
         "@typescript-eslint/eslint-plugin": "^8.53.0",
         "@typescript-eslint/parser": "^8.53.0",
         "eslint": "^9.39.2",
         "eslint-config-prettier": "^10.1.8",
-        "eslint-plugin-prettier": "^5.5.4",
+        "eslint-plugin-prettier": "^5.5.5",
         "jest": "^30.2.0",
-        "prettier": "^3.7.4",
+        "prettier": "^3.8.0",
         "semantic-release": "^25.0.2",
         "ts-jest": "^29.4.6",
         "typescript": "^5.9.3",
