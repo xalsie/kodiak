@@ -18,6 +18,12 @@ export class AddJobUseCase<T> {
             addedAt: new Date(),
             retryCount: 0,
             maxAttempts: options?.attempts ?? 1,
+            backoff: options?.backoff,
+            progress: 0,
+            updateProgress: async () => {
+                // This will be overwritten by the worker when processing the job
+                return Promise.resolve();
+            }
         };
 
         const now = Date.now();

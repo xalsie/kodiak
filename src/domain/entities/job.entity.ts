@@ -1,5 +1,7 @@
 export type JobStatus = 'waiting' | 'active' | 'completed' | 'failed' | 'delayed';
 
+export type BackoffStrategy = 'fixed' | 'exponential' | string;
+
 export interface Job<T> {
     id: string;
     data: T;
@@ -12,7 +14,7 @@ export interface Job<T> {
     retryCount: number;
     maxAttempts: number;
     backoff?: {
-        type: 'fixed' | 'exponential' | string;
+        type: BackoffStrategy;
         delay: number;
     };
     repeat?: {
@@ -21,5 +23,7 @@ export interface Job<T> {
         count: number;
     };
     error?: string;
+    progress?: number;
     processedAt?: Date;
+    updateProgress: (progress: number) => Promise<void>;
 }

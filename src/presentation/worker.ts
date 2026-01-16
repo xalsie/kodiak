@@ -4,6 +4,7 @@ import { Kodiak } from './kodiak.js';
 import { FetchJobUseCase } from '../application/use-cases/fetch-job.use-case.js';
 import { CompleteJobUseCase } from '../application/use-cases/complete-job.use-case.js';
 import { FailJobUseCase } from '../application/use-cases/fail-job.use-case.js';
+import { UpdateJobProgressUseCase } from '../application/use-cases/update-job-progress.use-case.js';
 import { RedisQueueRepository } from '../infrastructure/redis/redis-queue.repository.js';
 import { Semaphore } from '../utils/semaphore.js';
 import type { WorkerOptions } from '../application/dtos/worker-options.dto.js';
@@ -13,6 +14,7 @@ export class Worker<T> extends EventEmitter {
     private fetchJobUseCases: FetchJobUseCase<T>[] = [];
     private readonly completeJobUseCase: CompleteJobUseCase<T>;
     private readonly failJobUseCase: FailJobUseCase<T>;
+    private readonly updateJobProgressUseCase: UpdateJobProgressUseCase<T>;
     private isRunning = false;
     private activeJobs = 0;
     private blockingConnections: Redis[] = [];
@@ -22,7 +24,7 @@ export class Worker<T> extends EventEmitter {
 
     constructor(
         public readonly name: string,
-        private processor: (job: T) => Promise<void>,
+        private processor: (job: Job<T>) => Promise<void>,
         private readonly kodiak: Kodiak,
         private opts?: WorkerOptions,
     ) {
@@ -41,6 +43,7 @@ export class Worker<T> extends EventEmitter {
             ackQueueRepository,
             opts?.backoffStrategies
         );
+        this.updateJobProgressUseCase = new UpdateJobProgressUseCase<T>(ackQueueRepository);
     }
 
     /**
@@ -128,12 +131,20 @@ export class Worker<T> extends EventEmitter {
 
                 if (job) {
                     this.activeJobs++;
+
+                    const updateProgress = async (progress: number) => {
+                        await this.updateJobProgressUseCase.execute(job.id, progress);
+                        job.progress = progress;
+                        this.emit('progress', job, progress);
+                    };
+                    job.updateProgress = updateProgress;
+
                     try {
                         if (this.processingSemaphore) {
                             await this.processingSemaphore.acquire();
                         }
                         
-                        await this.processor(job.data);
+                        await this.processor(job);
 
                         await this.completeJobUseCase.execute(job.id);
                         job.status = 'completed';
