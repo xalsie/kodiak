@@ -271,7 +271,6 @@ describe('Worker', () => {
         
         await anyWorker.processNext(0);
 
-        // Wait for microtasks/promises to settle
         await new Promise(resolve => setTimeout(resolve, 100));
 
         expect(processor).toHaveBeenCalled();

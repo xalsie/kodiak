@@ -59,7 +59,7 @@ describe('AddJobUseCase', () => {
         expect(mockQueueRepository.add).toHaveBeenCalledWith(
             expect.any(Object),
             expect.any(Number),
-            true, // isDelayed flag
+            true,
         );
     });
 
@@ -75,7 +75,7 @@ describe('AddJobUseCase', () => {
         expect(mockQueueRepository.add).toHaveBeenCalledWith(
             expect.any(Object),
             expect.any(Number),
-            true, // isDelayed flag
+            true,
         );
     });
 
@@ -98,8 +98,6 @@ describe('AddJobUseCase', () => {
         await addJobUseCase.execute(id, data, options);
         const afterCall = Date.now();
 
-        // Score calculation: priority * PRIORITY_MULTIPLIER + (now + delay)
-        // With priority 2 and no delay:
         const minExpectedScore = 2 * PRIORITY_MULTIPLIER + beforeCall;
         const maxExpectedScore = 2 * PRIORITY_MULTIPLIER + afterCall;
 
@@ -136,15 +134,12 @@ describe('AddJobUseCase', () => {
     it('should ensure higher priority (lower number) has lower score', async () => {
         const data = { message: 'priority comparison' };
 
-        // High priority (lower number)
         await addJobUseCase.execute('job-high', data, { priority: 1 });
         const highPriorityScore = mockQueueRepository.add.mock.calls[0][1] as number;
 
-        // Low priority (higher number)
         await addJobUseCase.execute('job-low', data, { priority: 10 });
         const lowPriorityScore = mockQueueRepository.add.mock.calls[1][1] as number;
 
-        // Higher priority (1) should have a lower score than lower priority (10)
         expect(highPriorityScore).toBeLessThan(lowPriorityScore);
     });
 
@@ -152,7 +147,6 @@ describe('AddJobUseCase', () => {
         const data = { message: 'fifo test' };
         const priority = 5;
 
-        // Use fake timers to control time progression
         jest.useFakeTimers();
         const baseTime = Date.now();
         jest.setSystemTime(baseTime);
@@ -160,13 +154,11 @@ describe('AddJobUseCase', () => {
         await addJobUseCase.execute('job-first', data, { priority });
         const firstScore = mockQueueRepository.add.mock.calls[0][1] as number;
 
-        // Advance time by 10ms to ensure different timestamp
         jest.setSystemTime(baseTime + 10);
 
         await addJobUseCase.execute('job-second', data, { priority });
         const secondScore = mockQueueRepository.add.mock.calls[1][1] as number;
 
-        // First job should have lower score than second (FIFO)
         expect(firstScore).toBeLessThan(secondScore);
 
         jest.useRealTimers();
