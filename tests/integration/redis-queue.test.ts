@@ -38,6 +38,7 @@ describe('Integration: RedisQueueRepository', () => {
             addedAt: new Date(),
             retryCount: 0,
             maxAttempts: 1,
+            updateProgress: async () => Promise.resolve(),
         };
         const score = priority * 10000000000000 + (Date.now() + delay);
         return { job, score };

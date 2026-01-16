@@ -14,6 +14,7 @@ describe('FailJobUseCase', () => {
             fetchNext: jest.fn(),
             markAsCompleted: jest.fn(),
             markAsFailed: jest.fn<IQueueRepository<unknown>['markAsFailed']>().mockResolvedValue(undefined),
+            updateProgress: jest.fn<IQueueRepository<unknown>['updateProgress']>().mockResolvedValue(undefined),
         };
         failJobUseCase = new FailJobUseCase(mockQueueRepository);
     });
@@ -27,6 +28,7 @@ describe('FailJobUseCase', () => {
         retryCount: 0,
         maxAttempts: 3,
         ...overrides,
+        updateProgress: async () => Promise.resolve(),
     });
 
     it('should call markAsFailed on the repository without nextAttempt when no backoff configured', async () => {

@@ -1,5 +1,6 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import type { Redis } from 'ioredis';
+import type { Job } from '../../src/domain/entities/job.entity.js';
 
 jest.unstable_mockModule('fs', () => ({
     readFileSync: jest.fn().mockReturnValue('return 1'),
@@ -96,7 +97,7 @@ describe('Unit: RedisQueueRepository', () => {
     });
 
     it('should pass backoff options to Lua script when adding a job', async () => {
-        const job = {
+        const job: Job<{ foo: string }> = {
             id: 'job-with-backoff',
             data: { foo: 'bar' },
             priority: 1,
@@ -107,7 +108,8 @@ describe('Unit: RedisQueueRepository', () => {
             backoff: {
                 type: 'exponential' as const,
                 delay: 5000
-            }
+            },
+            updateProgress: async () => Promise.resolve(),
         };
 
         await repository.add(job, 1, false);
