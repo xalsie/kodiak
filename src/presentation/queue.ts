@@ -15,8 +15,7 @@ export class Queue<T> {
     ) {
         this.queueRepository = new RedisQueueRepository<T>(name, kodiak.connection, kodiak.prefix);
         this.addJobUseCase = new AddJobUseCase<T>(this.queueRepository);
-        
-        // Start scheduler for delayed jobs
+
         this.startScheduler();
     }
 
@@ -27,10 +26,6 @@ export class Queue<T> {
     private startScheduler() {
         if (this.schedulerInterval) return;
 
-        // Check for delayed jobs every 5 seconds
-        // In a real production environment, this should probably be configurable
-        // or handled by a dedicated "Scheduler" component to avoid having too many timers
-        // if many queues are created.
         this.schedulerInterval = setInterval(async () => {
             try {
                 await this.queueRepository.promoteDelayedJobs();
