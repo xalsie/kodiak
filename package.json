@@ -17,8 +17,8 @@
         "url": "https://github.com/xalsie/kodiak/issues"
     },
     "repository": {
-        "type": "npm",
-        "url": "https://registry.npmjs.org/@legrizzly/kodiak"
+        "type": "git",
+        "url": "https://github.com/xalsie/kodiak.git"
     },
     "license": "ISC",
     "author": "LeGrizzly",
