@@ -18,7 +18,7 @@
     },
     "repository": {
         "type": "npm",
-        "url": "https://registry.npmjs.org/legrizzly/kodiak"
+        "url": "https://registry.npmjs.org/@legrizzly/kodiak"
     },
     "license": "ISC",
     "author": "LeGrizzly",
