@@ -5,4 +5,5 @@ export interface IQueueRepository<T> {
     fetchNext(timeout?: number): Promise<Job<T> | null>;
     markAsCompleted(jobId: string, completedAt: Date): Promise<void>;
     markAsFailed(jobId: string, error: string, failedAt: Date, nextAttempt?: Date): Promise<void>;
+    updateProgress(jobId: string, progress: number): Promise<void>;
 }

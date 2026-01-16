@@ -2,6 +2,7 @@ import { Redis, type RedisOptions } from 'ioredis';
 import { Queue } from './queue.js';
 import { Worker } from './worker.js';
 import type { WorkerOptions } from '../application/dtos/worker-options.dto.js';
+import type { Job } from '../domain/entities/job.entity.js';
 
 export interface KodiakOptions {
     connection: RedisOptions;
@@ -23,7 +24,7 @@ export class Kodiak {
 
     public createWorker<T>(
         name: string,
-        processor: (job: T) => Promise<void>,
+        processor: (job: Job<T>) => Promise<void>,
         opts?: WorkerOptions,
     ): Worker<T> {
         return new Worker<T>(name, processor, this, opts);

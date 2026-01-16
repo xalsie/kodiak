@@ -19,6 +19,7 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
     private completeJobScript: string;
     private failJobScript: string;
     private promoteDelayedJobsScript: string;
+    private updateProgressScript: string;
 
     constructor(
         private readonly queueName: string,
@@ -37,6 +38,7 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
         this.completeJobScript = fs.readFileSync(path.join(__dirname, 'lua', 'complete_job.lua'), 'utf8');
         this.failJobScript = fs.readFileSync(path.join(__dirname, 'lua', 'fail_job.lua'), 'utf8');
         this.promoteDelayedJobsScript = fs.readFileSync(path.join(__dirname, 'lua', 'promote_delayed_jobs.lua'), 'utf8');
+        this.updateProgressScript = fs.readFileSync(path.join(__dirname, 'lua', 'update_progress.lua'), 'utf8');
     }
 
     async add(job: Job<T>, score: number, isDelayed: boolean): Promise<void> {
@@ -163,6 +165,10 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
             maxAttempts: Number(jobData.max_attempts),
             addedAt: new Date(Number(jobData.added_at)),
             startedAt: jobData.started_at ? new Date(Number(jobData.started_at)) : new Date(now),
+            progress: jobData.progress ? Number(jobData.progress) : 0,
+            updateProgress: async (progress: number) => {
+                await this.updateProgress(jobId, progress);
+            }
         };
 
         return jobEntity;
@@ -211,5 +217,15 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
             String(limit)
         );
         return Number(result);
+    }
+
+    async updateProgress(jobId: string, progress: number): Promise<void> {
+        const jobKey = `${this.jobKeyPrefix}${jobId}`;
+        await this.connection.eval(
+            this.updateProgressScript,
+            1,
+            jobKey,
+            String(progress)
+        );
     }
 }

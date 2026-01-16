@@ -15,6 +15,7 @@ describe('AddJobUseCase', () => {
             fetchNext: jest.fn(),
             markAsCompleted: jest.fn(),
             markAsFailed: jest.fn(),
+            updateProgress: jest.fn<IQueueRepository<unknown>['updateProgress']>().mockResolvedValue(undefined),
         };
         addJobUseCase = new AddJobUseCase(mockQueueRepository);
     });
