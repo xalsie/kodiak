@@ -90,7 +90,8 @@ describe('Unit: RedisQueueRepository', () => {
             expect.stringContaining(':delayed'),
             jobId,
             errorMsg,
-            String(failedAt.getTime())
+            String(failedAt.getTime()),
+            '-1'
         );
     });
 

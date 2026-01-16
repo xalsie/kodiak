@@ -51,7 +51,10 @@ describe('Worker', () => {
         (FailJobUseCase as unknown as jest.Mock).mockClear();
 
         mockFetchExecute.mockReset();
-        mockFetchExecute.mockResolvedValue(null as never);
+        mockFetchExecute.mockImplementation(async () => {
+            await new Promise(resolve => setTimeout(resolve, 10)); // Simulate Redis latency/blocking
+            return null;
+        });
 
         mockCompleteExecute.mockReset();
         mockCompleteExecute.mockResolvedValue(undefined as never);
@@ -154,7 +157,7 @@ describe('Worker', () => {
 
         expect(processor).toHaveBeenCalledWith(mockJob.data);
 
-        expect(mockFailExecute).toHaveBeenCalledWith('job-123', testError);
+        expect(mockFailExecute).toHaveBeenCalledWith(mockJob, testError);
         expect(failedEmitter).toHaveBeenCalledWith(mockJob, testError);
 
         await worker.stop();
@@ -210,8 +213,7 @@ describe('Worker', () => {
 
         mockFetchExecute
             .mockResolvedValueOnce(job1 as never)
-            .mockResolvedValueOnce(job2 as never)
-            .mockResolvedValue(null as never);
+            .mockResolvedValueOnce(job2 as never);
 
         let releaseJob1: (value: void) => void = () => {};
         const job1Blocker = new Promise<void>((resolve) => {
@@ -317,7 +319,7 @@ describe('Worker', () => {
         await new Promise(resolve => setTimeout(resolve, 300));
 
         expect(mockFailExecute).toHaveBeenCalledWith(
-            'job-string-error', 
+            mockJob, 
             expect.objectContaining({ message: stringError })
         );
         expect(failedEmitter).toHaveBeenCalledWith(

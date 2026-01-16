@@ -182,7 +182,7 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
         );
     }
 
-    async markAsFailed(jobId: string, error: string, failedAt: Date): Promise<void> {
+    async markAsFailed(jobId: string, error: string, failedAt: Date, nextAttempt?: Date): Promise<void> {
         const jobKey = `${this.jobKeyPrefix}${jobId}`;
         
         await this.connection.eval(
@@ -193,7 +193,8 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
             this.delayedQueueKey,
             jobId,
             error,
-            String(failedAt.getTime())
+            String(failedAt.getTime()),
+            nextAttempt ? String(nextAttempt.getTime()) : '-1'
         );
     }
 

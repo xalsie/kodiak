@@ -1,6 +1,7 @@
-import { jest } from '@jest/globals';
-import { FailJobUseCase } from '../../src/application/use-cases/fail-job.use-case';
-import type { IQueueRepository } from '../../src/domain/repositories/queue.repository';
+import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { FailJobUseCase } from '../../src/application/use-cases/fail-job.use-case.js';
+import type { IQueueRepository } from '../../src/domain/repositories/queue.repository.js';
+import type { Job } from '../../src/domain/entities/job.entity.js';
 
 describe('FailJobUseCase', () => {
     let failJobUseCase: FailJobUseCase<unknown>;
@@ -16,35 +17,77 @@ describe('FailJobUseCase', () => {
         failJobUseCase = new FailJobUseCase(mockQueueRepository);
     });
 
-    it('should call markAsFailed on the repository', async () => {
+    const createMockJob = (overrides: Partial<Job<unknown>> = {}): Job<unknown> => ({
+        id: 'job-123',
+        data: {},
+        status: 'active',
+        priority: 0,
+        addedAt: new Date(),
+        retryCount: 0,
+        maxAttempts: 3,
+        ...overrides,
+    });
+
+    it('should call markAsFailed on the repository without nextAttempt when no backoff configured', async () => {
+        const job = createMockJob();
         const error = new Error('Job processing failed');
-        await failJobUseCase.execute('job-123', error);
+        
+        await failJobUseCase.execute(job.id, error);
 
         expect(mockQueueRepository.markAsFailed).toHaveBeenCalledWith(
-            'job-123',
+            job.id,
             'Job processing failed',
-            expect.any(Date),
+            expect.any(Date)
         );
     });
 
-    it('should extract error message from Error object', async () => {
-        const error = new Error('Custom error message');
-        await failJobUseCase.execute('job-456', error);
+    it('should calculate fixed backoff correctly', async () => {
+        const job = createMockJob({
+            retryCount: 0,
+            backoff: { type: 'fixed', delay: 1000 }
+        });
+        const error = new Error('Error');
+        
+        const now = Date.now();
+        jest.useFakeTimers({ now });
 
-        const calls = mockQueueRepository.markAsFailed.mock.calls;
-        expect(calls[0][1]).toBe('Custom error message');
+        await failJobUseCase.execute(job.id, error);
+
+        expect(mockQueueRepository.markAsFailed).toHaveBeenCalledWith(
+            job.id,
+            error.message,
+            expect.any(Date)
+        );
+
+        jest.useRealTimers();
     });
 
-    it('should pass the current date to markAsFailed', async () => {
-        const error = new Error('Test error');
-        const beforeCall = new Date();
-        await failJobUseCase.execute('job-789', error);
-        const afterCall = new Date();
+    it('should calculate exponential backoff correctly', async () => {
+        // Retry 1 (attemptsMade = 1): 1000 * 2^0 = 1000
+        const job1 = createMockJob({ retryCount: 0, backoff: { type: 'exponential', delay: 1000 } });
+        // Retry 2 (attemptsMade = 2): 1000 * 2^1 = 2000
+        const job2 = createMockJob({ retryCount: 1, backoff: { type: 'exponential', delay: 1000 } });
+        // Retry 3 (attemptsMade = 3): 1000 * 2^2 = 4000
+        const job3 = createMockJob({ retryCount: 2, backoff: { type: 'exponential', delay: 1000 } });
 
-        const calls = mockQueueRepository.markAsFailed.mock.calls;
-        const passedDate = calls[0][2] as Date;
+        const now = Date.now();
+        jest.useFakeTimers({ now });
 
-        expect(passedDate.getTime()).toBeGreaterThanOrEqual(beforeCall.getTime());
-        expect(passedDate.getTime()).toBeLessThanOrEqual(afterCall.getTime());
+        await failJobUseCase.execute(job1.id, new Error('E1'));
+        expect(mockQueueRepository.markAsFailed).toHaveBeenLastCalledWith(
+            job1.id, 'E1', expect.any(Date)
+        );
+
+        await failJobUseCase.execute(job2.id, new Error('E2'));
+        expect(mockQueueRepository.markAsFailed).toHaveBeenLastCalledWith(
+            job2.id, 'E2', expect.any(Date)
+        );
+
+        await failJobUseCase.execute(job3.id, new Error('E3'));
+        expect(mockQueueRepository.markAsFailed).toHaveBeenLastCalledWith(
+            job3.id, 'E3', expect.any(Date)
+        );
+
+        jest.useRealTimers();
     });
 });
