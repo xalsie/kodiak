@@ -11,6 +11,7 @@ const mockPromoteDelayedJobs = jest.fn().mockResolvedValue(0 as never);
 jest.unstable_mockModule('../../src/infrastructure/redis/redis-queue.repository.js', () => ({
     RedisQueueRepository: jest.fn().mockImplementation(() => ({
         promoteDelayedJobs: mockPromoteDelayedJobs,
+        recoverStalledJobs: jest.fn().mockResolvedValue([] as never),
         add: jest.fn(),
     }))
 }));
@@ -23,10 +24,16 @@ describe('Unit: Queue', () => {
     
     beforeEach(() => {
         jest.useFakeTimers();
+
+        const mockConnection = {
+            duplicate: jest.fn(() => mockConnection),
+            quit: jest.fn().mockResolvedValue('OK' as never),
+        };
+
         mockKodiak = {
-            connection: {},
+            connection: mockConnection,
             prefix: 'test'
-        } as Kodiak;
+        } as unknown as Kodiak;
         mockPromoteDelayedJobs.mockClear();
     });
 
@@ -72,7 +79,7 @@ describe('Unit: Queue', () => {
 
         expect(mockPromoteDelayedJobs).toHaveBeenCalled();
         expect(consoleSpy).toHaveBeenCalledWith(
-            expect.stringContaining('Error promoting delayed jobs'),
+            expect.stringContaining('Error during scheduled tasks'),
             expect.any(Error)
         );
 
@@ -101,6 +108,28 @@ describe('Unit: Queue', () => {
         await queue.add('job-1', data);
 
         expect(mockExecute).toHaveBeenCalledWith('job-1', data, undefined);
+        
+        await queue.close();
+    });
+
+    it('should handle close when schedulerInterval is null', async () => {
+        const queue = new Queue('test-queue', mockKodiak);
+        
+        // Fermer une première fois pour mettre schedulerInterval à null
+        await queue.close();
+        
+        // Fermer une seconde fois - ne devrait pas planter
+        await expect(queue.close()).resolves.not.toThrow();
+    });
+
+    it('should call AddJobUseCase with options when provided', async () => {
+        const queue = new Queue('test-queue', mockKodiak);
+        const data = { foo: 'bar' };
+        const options = { priority: 5, attempts: 3 };
+        
+        await queue.add('job-2', data, options);
+
+        expect(mockExecute).toHaveBeenCalledWith('job-2', data, options);
         
         await queue.close();
     });

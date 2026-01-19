@@ -15,6 +15,9 @@ describe('FailJobUseCase', () => {
             markAsCompleted: jest.fn(),
             markAsFailed: jest.fn<IQueueRepository<unknown>['markAsFailed']>().mockResolvedValue(undefined),
             updateProgress: jest.fn<IQueueRepository<unknown>['updateProgress']>().mockResolvedValue(undefined),
+            fetchNextJobs: jest.fn(),
+            promoteDelayedJobs: jest.fn(),
+            recoverStalledJobs: jest.fn(),
         };
         failJobUseCase = new FailJobUseCase(mockQueueRepository);
     });

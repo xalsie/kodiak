@@ -12,6 +12,10 @@ describe('CompleteJobUseCase', () => {
             fetchNext: jest.fn(),
             markAsCompleted: jest.fn<IQueueRepository<unknown>['markAsCompleted']>().mockResolvedValue(undefined),
             markAsFailed: jest.fn(),
+            updateProgress: jest.fn(),
+            fetchNextJobs: jest.fn(),
+            promoteDelayedJobs: jest.fn(),
+            recoverStalledJobs: jest.fn(),
         };
         completeJobUseCase = new CompleteJobUseCase(mockQueueRepository);
     });

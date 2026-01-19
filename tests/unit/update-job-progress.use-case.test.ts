@@ -13,7 +13,7 @@ describe('UpdateJobProgressUseCase', () => {
             markAsCompleted: jest.fn(),
             markAsFailed: jest.fn(),
             updateProgress: jest.fn<IQueueRepository<unknown>['updateProgress']>().mockResolvedValue(undefined),
-        };
+        } as unknown as jest.Mocked<IQueueRepository<unknown>>;
         updateJobProgressUseCase = new UpdateJobProgressUseCase(mockQueueRepository);
     });
 

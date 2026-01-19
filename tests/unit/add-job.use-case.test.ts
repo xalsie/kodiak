@@ -16,6 +16,9 @@ describe('AddJobUseCase', () => {
             markAsCompleted: jest.fn(),
             markAsFailed: jest.fn(),
             updateProgress: jest.fn<IQueueRepository<unknown>['updateProgress']>().mockResolvedValue(undefined),
+            fetchNextJobs: jest.fn(),
+            promoteDelayedJobs: jest.fn(),
+            recoverStalledJobs: jest.fn(),
         };
         addJobUseCase = new AddJobUseCase(mockQueueRepository);
     });
@@ -176,5 +179,27 @@ describe('AddJobUseCase', () => {
         expect(result).toHaveProperty('addedAt');
         expect(result).toHaveProperty('status');
         expect(result).toHaveProperty('priority');
+    });
+
+    it('should include updateProgress function in created job', async () => {
+        const id = 'job-update-progress-test';
+        const data = { message: 'update progress test' };
+
+        const result = await addJobUseCase.execute(id, data);
+
+        expect(result.updateProgress).toBeDefined();
+        expect(typeof result.updateProgress).toBe('function');
+        await expect(result.updateProgress(100)).resolves.toBeUndefined();
+    });
+
+    it('should include backoff strategy when provided', async () => {
+        const id = 'job-backoff-test';
+        const data = { message: 'backoff test' };
+        const backoff = { type: 'exponential' as const, delay: 1000 };
+        const options = { backoff };
+
+        const result = await addJobUseCase.execute(id, data, options);
+
+        expect(result.backoff).toEqual(backoff);
     });
 });
