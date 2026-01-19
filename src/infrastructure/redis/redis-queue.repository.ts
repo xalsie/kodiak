@@ -173,7 +173,6 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
     
         const jobs: Job<T>[] = [];
         for (let i = 0; i < results.length; i += 2) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const [hgetallError, jobData] = results[i + 1] as [Error | null, Record<string, string>];
             const jobId = jobIds[i / 2];
     
