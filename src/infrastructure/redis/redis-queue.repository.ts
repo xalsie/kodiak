@@ -1,7 +1,7 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Redis } from 'ioredis';
-import * as fs from 'fs';
-import * as path from 'path';
-import { fileURLToPath } from 'url';
 import type { Job, JobStatus } from '../../domain/entities/job.entity.js';
 import type { IQueueRepository } from '../../domain/repositories/queue.repository.js';
 
@@ -20,17 +20,19 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
     private failJobScript: string;
     private promoteDelayedJobsScript: string;
     private updateProgressScript: string;
+    private moveToActiveScript: string;
+    private recoverStalledJobsScript: string;
 
     constructor(
         private readonly queueName: string,
         private readonly connection: Redis,
         private readonly prefix: string,
     ) {
-        this.waitingQueueKey = `${prefix}:queue:${queueName}:waiting`;
-        this.delayedQueueKey = `${prefix}:queue:${queueName}:delayed`;
-        this.activeQueueKey = `${prefix}:queue:${queueName}:active`;
-        this.notificationQueueKey = `${prefix}:queue:${queueName}:notify`;
-        this.jobKeyPrefix = `${prefix}:jobs:`;
+        this.waitingQueueKey = `${this.prefix}:queue:${this.queueName}:waiting`;
+        this.delayedQueueKey = `${this.prefix}:queue:${this.queueName}:delayed`;
+        this.activeQueueKey = `${this.prefix}:queue:${this.queueName}:active`;
+        this.notificationQueueKey = `${this.prefix}:queue:${this.queueName}:notify`;
+        this.jobKeyPrefix = `${this.prefix}:jobs:`;
 
         // Load Lua scripts
         this.addJobScript = fs.readFileSync(path.join(__dirname, 'lua', 'add_job.lua'), 'utf8');
@@ -39,8 +41,21 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
         this.failJobScript = fs.readFileSync(path.join(__dirname, 'lua', 'fail_job.lua'), 'utf8');
         this.promoteDelayedJobsScript = fs.readFileSync(path.join(__dirname, 'lua', 'promote_delayed_jobs.lua'), 'utf8');
         this.updateProgressScript = fs.readFileSync(path.join(__dirname, 'lua', 'update_progress.lua'), 'utf8');
+        this.moveToActiveScript = fs.readFileSync(path.join(__dirname, 'lua', 'move_to_active.lua'), 'utf8');
+        this.recoverStalledJobsScript = fs.readFileSync(path.join(__dirname, 'lua', 'detect_and_recover_stalled_jobs.lua'), 'utf8');
     }
 
+    async recoverStalledJobs(): Promise<string[]> {
+        return this.connection.eval(
+            this.recoverStalledJobsScript,
+            3,
+            this.activeQueueKey,
+            this.waitingQueueKey,
+            this.jobKeyPrefix,
+            String(Date.now())
+        ) as Promise<string[]>;
+    }
+    
     async add(job: Job<T>, score: number, isDelayed: boolean): Promise<void> {
         const jobKey = `${this.jobKeyPrefix}${job.id}`;
 
@@ -127,6 +142,73 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
         return null;
     }
 
+    async fetchNextJobs(count: number, lockDuration: number): Promise<Job<T>[]> {
+        const now = Date.now();
+        const lockExpiresAt = now + lockDuration;
+    
+        const jobIds = (await this.connection.eval(
+            this.moveToActiveScript,
+            2,
+            this.waitingQueueKey,
+            this.activeQueueKey,
+            String(count),
+            String(lockExpiresAt)
+        )) as string[];
+    
+        if (!jobIds || jobIds.length === 0) {
+            return [];
+        }
+    
+        const pipeline = this.connection.pipeline();
+        for (const jobId of jobIds) {
+            const jobKey = `${this.jobKeyPrefix}${jobId}`;
+            pipeline.hset(jobKey, 'state', 'active', 'started_at', now);
+            pipeline.hgetall(jobKey);
+        }
+        const results = await pipeline.exec();
+    
+        if (!results) {
+            return [];
+        }
+    
+        const jobs: Job<T>[] = [];
+        for (let i = 0; i < results.length; i += 2) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const [hgetallError, jobData] = results[i + 1] as [Error | null, Record<string, string>];
+            const jobId = jobIds[i / 2];
+    
+            if (!hgetallError && jobData) {
+                const job = this.buildJobEntityFromRecord(jobId, jobData, now);
+                if (job) {
+                    jobs.push(job);
+                }
+            }
+        }
+    
+        return jobs;
+    }
+
+    private buildJobEntityFromRecord(jobId: string, jobData: Record<string, string>, now: number): Job<T> | null {
+        if (!jobData.data) return null;
+
+        const jobEntity: Job<T> = {
+            id: jobId,
+            data: JSON.parse(jobData.data),
+            priority: Number(jobData.priority),
+            status: jobData.state as JobStatus,
+            retryCount: Number(jobData.retry_count),
+            maxAttempts: Number(jobData.max_attempts),
+            addedAt: new Date(Number(jobData.added_at)),
+            startedAt: jobData.started_at ? new Date(Number(jobData.started_at)) : new Date(now),
+            progress: jobData.progress ? Number(jobData.progress) : 0,
+            updateProgress: async (progress: number) => {
+                await this.updateProgress(jobId, progress);
+            }
+        };
+
+        return jobEntity;
+    }
+
     private async processFetchResult(result: [string, string[] | null], now: number): Promise<Job<T> | null> {
         const [jobId, rawData] = result;
         const jobKey = `${this.jobKeyPrefix}${jobId}`;
@@ -156,22 +238,7 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
 
         if (!jobData.data) return null;
 
-        const jobEntity: Job<T> = {
-            id: jobId,
-            data: JSON.parse(jobData.data),
-            priority: Number(jobData.priority),
-            status: jobData.state as JobStatus,
-            retryCount: Number(jobData.retry_count),
-            maxAttempts: Number(jobData.max_attempts),
-            addedAt: new Date(Number(jobData.added_at)),
-            startedAt: jobData.started_at ? new Date(Number(jobData.started_at)) : new Date(now),
-            progress: jobData.progress ? Number(jobData.progress) : 0,
-            updateProgress: async (progress: number) => {
-                await this.updateProgress(jobId, progress);
-            }
-        };
-
-        return jobEntity;
+        return this.buildJobEntityFromRecord(jobId, jobData, now);
     }
 
     async markAsCompleted(jobId: string, completedAt: Date): Promise<void> {

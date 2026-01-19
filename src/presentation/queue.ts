@@ -1,3 +1,4 @@
+import { Redis } from 'ioredis';
 import { Kodiak } from './kodiak.js';
 import { AddJobUseCase } from '../application/use-cases/add-job.use-case.js';
 import { RedisQueueRepository } from '../infrastructure/redis/redis-queue.repository.js';
@@ -8,12 +9,14 @@ export class Queue<T> {
     private readonly addJobUseCase: AddJobUseCase<T>;
     private readonly queueRepository: RedisQueueRepository<T>;
     private schedulerInterval: NodeJS.Timeout | null = null;
+    private readonly connection: Redis;
 
     constructor(
         public readonly name: string,
         private readonly kodiak: Kodiak,
     ) {
-        this.queueRepository = new RedisQueueRepository<T>(name, kodiak.connection, kodiak.prefix);
+        this.connection = this.kodiak.connection.duplicate();
+        this.queueRepository = new RedisQueueRepository<T>(name, this.connection, this.kodiak.prefix);
         this.addJobUseCase = new AddJobUseCase<T>(this.queueRepository);
 
         this.startScheduler();
@@ -30,7 +33,7 @@ export class Queue<T> {
             try {
                 await this.queueRepository.promoteDelayedJobs();
             } catch (error) {
-                console.error(`Error promoting delayed jobs for queue ${this.name}:`, error);
+                console.error(`Error during scheduled tasks for queue ${this.name}:`, error);
             }
         }, 5000);
     }
@@ -40,5 +43,6 @@ export class Queue<T> {
             clearInterval(this.schedulerInterval);
             this.schedulerInterval = null;
         }
+        await this.connection.quit();
     }
 }

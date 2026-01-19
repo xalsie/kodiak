@@ -1,6 +1,6 @@
 -- Script to atomically fetch the next job (Wait -> Active)
 -- KEYS[1]: Waiting Queue ZSet
--- KEYS[2]: Active Queue List
+-- KEYS[2]: Active Queue ZSet
 -- KEYS[3]: Notification List
 
 -- ARGV[1]: Current timestamp
@@ -17,8 +17,11 @@ end
 local jobId = result[1]
 -- result[2] is the score, we don't need it for the active list
 
--- 2. Push to active list
-redis.call('LPUSH', KEYS[2], jobId)
+-- 2. Add to active zset with a lock expiration timestamp
+local now = tonumber(ARGV[1])
+local lockDuration = 30000 -- Default lock duration of 30s
+local lockExpiresAt = now + lockDuration
+redis.call('ZADD', KEYS[2], lockExpiresAt, jobId)
 
 -- 3. Pop notification token if requested (Optimistic fetch)
 if ARGV[3] == '1' and KEYS[3] then

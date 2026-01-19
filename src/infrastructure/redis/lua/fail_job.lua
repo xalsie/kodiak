@@ -1,5 +1,5 @@
 -- Script to atomically fail a job with retry support
--- KEYS[1]: Active Queue List
+-- KEYS[1]: Active Queue ZSet
 -- KEYS[2]: Job Data Hash
 -- KEYS[3]: Delayed Queue ZSet (For retries)
 
@@ -24,7 +24,7 @@ local backoffType = jobData[3]
 local backoffDelay = tonumber(jobData[4]) or 0
 
 -- Remove from active queue regardless of outcome
-redis.call('LREM', activeQueue, 1, jobId)
+redis.call('ZREM', activeQueue, jobId)
 
 -- Check if we should retry
 -- We retry if the current retry_count is less than max_attempts - 1

@@ -100,13 +100,13 @@ describe('Integration: RedisQueueRepository', () => {
         const fetched = await repository.fetchNext();
         expect(fetched?.id).toBe('job-completed');
 
-        const activeCount = await redis.llen(`${prefix}:queue:${queueName}:active`);
+        const activeCount = await redis.zcard(`${prefix}:queue:${queueName}:active`);
         expect(activeCount).toBe(1);
 
         const completedAt = new Date();
         await repository.markAsCompleted('job-completed', completedAt);
 
-        const activeCountAfter = await redis.llen(`${prefix}:queue:${queueName}:active`);
+        const activeCountAfter = await redis.zcard(`${prefix}:queue:${queueName}:active`);
         expect(activeCountAfter).toBe(0);
 
         const state = await redis.hget(`${prefix}:jobs:job-completed`, 'state');
@@ -123,7 +123,7 @@ describe('Integration: RedisQueueRepository', () => {
         const errorMsg = 'Something went wrong';
         await repository.markAsFailed('job-failed', errorMsg, failedAt);
 
-        const activeCount = await redis.llen(`${prefix}:queue:${queueName}:active`);
+        const activeCount = await redis.zcard(`${prefix}:queue:${queueName}:active`);
         expect(activeCount).toBe(0);
 
         const state = await redis.hget(`${prefix}:jobs:job-failed`, 'state');
@@ -149,7 +149,7 @@ describe('Integration: RedisQueueRepository', () => {
         const retryCount = await redis.hget(`${prefix}:jobs:job-retry`, 'retry_count');
         expect(retryCount).toBe('1');
 
-        const activeCount = await redis.llen(`${prefix}:queue:${queueName}:active`);
+        const activeCount = await redis.zcard(`${prefix}:queue:${queueName}:active`);
         expect(activeCount).toBe(0);
 
         const delayedScore = await redis.zscore(`${prefix}:queue:${queueName}:delayed`, 'job-retry');
@@ -175,8 +175,9 @@ describe('Integration: RedisQueueRepository', () => {
 
         await redis.hset(`${prefix}:jobs:job-recurring`, 'repeat_count', '2');
 
+        // Move the job back to active for the final completion test
         await redis.zrem(`${prefix}:queue:${queueName}:delayed`, 'job-recurring');
-        await redis.lpush(`${prefix}:queue:${queueName}:active`, 'job-recurring');
+        await redis.zadd(`${prefix}:queue:${queueName}:active`, Date.now(), 'job-recurring');
 
         await repository.markAsCompleted('job-recurring', new Date());
 

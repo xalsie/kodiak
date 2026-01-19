@@ -1,5 +1,5 @@
 -- Script to atomically complete a job and reschedule if recurring
--- KEYS[1]: Active Queue List
+-- KEYS[1]: Active Queue ZSet
 -- KEYS[2]: Job Data Hash
 -- KEYS[3]: Delayed Queue ZSet (For recurrence)
 
@@ -20,7 +20,7 @@ local repeatLimit = tonumber(jobData[2])
 local repeatCount = tonumber(jobData[3]) or 0
 
 -- Remove from active queue
-redis.call('LREM', activeQueue, 1, jobId)
+redis.call('ZREM', activeQueue, jobId)
 
 -- Check if we should reschedule
 local shouldReschedule = false

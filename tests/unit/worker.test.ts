@@ -1,4 +1,5 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import type { Redis } from 'ioredis';
 import type { Kodiak } from '../../src/presentation/kodiak.js';
 import type { Job } from '../../src/domain/entities/job.entity.js';
 
@@ -9,11 +10,12 @@ const mockFailExecute = jest.fn();
 jest.unstable_mockModule('../../src/infrastructure/redis/redis-queue.repository.js', () => ({
     RedisQueueRepository: jest.fn().mockImplementation(() => ({
         updateProgress: jest.fn(),
+        fetchNextJobs: jest.fn(),
     })),
 }));
 
-jest.unstable_mockModule('../../src/application/use-cases/fetch-job.use-case.js', () => ({
-    FetchJobUseCase: jest.fn().mockImplementation(() => ({
+jest.unstable_mockModule('../../src/application/use-cases/fetch-jobs.use-case.js', () => ({
+    FetchJobsUseCase: jest.fn().mockImplementation(() => ({
         execute: mockFetchExecute,
     })),
 }));
@@ -31,7 +33,7 @@ jest.unstable_mockModule('../../src/application/use-cases/fail-job.use-case.js',
 }));
 
 const { Worker } = await import('../../src/presentation/worker.js');
-const { FetchJobUseCase } = await import('../../src/application/use-cases/fetch-job.use-case.js');
+const { FetchJobsUseCase } = await import('../../src/application/use-cases/fetch-jobs.use-case.js');
 const { CompleteJobUseCase } = await import('../../src/application/use-cases/complete-job.use-case.js');
 const { FailJobUseCase } = await import('../../src/application/use-cases/fail-job.use-case.js');
 
@@ -40,22 +42,26 @@ describe('Worker', () => {
     let processor: jest.MockedFunction<(job: unknown) => Promise<void>>;
 
     beforeEach(() => {
+        const mockRedisConnection = {
+            duplicate: jest.fn().mockReturnThis(),
+            quit: jest.fn(),
+            disconnect: jest.fn(),
+            brpop: jest.fn(),
+        };
         mockKodiak = {
-            connection: {
-                duplicate: jest.fn().mockReturnValue({ quit: jest.fn() }),
-            },
+            connection: mockRedisConnection as unknown as Redis,
             prefix: 'kodiak-test',
         } as unknown as Kodiak;
         processor = jest.fn() as jest.MockedFunction<(job: unknown) => Promise<void>>;
 
-        (FetchJobUseCase as unknown as jest.Mock).mockClear();
+        (FetchJobsUseCase as unknown as jest.Mock).mockClear();
         (CompleteJobUseCase as unknown as jest.Mock).mockClear();
         (FailJobUseCase as unknown as jest.Mock).mockClear();
 
         mockFetchExecute.mockReset();
         mockFetchExecute.mockImplementation(async () => {
             await new Promise(resolve => setTimeout(resolve, 10)); // Simulate Redis latency/blocking
-            return null;
+            return [];
         });
 
         mockCompleteExecute.mockReset();
@@ -79,6 +85,7 @@ describe('Worker', () => {
 
     afterEach(() => {
         jest.clearAllMocks();
+        jest.useRealTimers();
     });
 
     it('should create a worker instance', () => {
@@ -87,12 +94,13 @@ describe('Worker', () => {
     });
 
     it('should emit start event when started', async () => {
+        jest.useFakeTimers();
         const worker = new Worker('test-queue', processor, mockKodiak);
         const startEmitter = jest.fn();
         worker.on('start', startEmitter);
 
         await worker.start();
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await jest.advanceTimersByTimeAsync(100);
 
         expect(startEmitter).toHaveBeenCalled();
 
@@ -100,12 +108,13 @@ describe('Worker', () => {
     });
 
     it('should emit stop event when stopped', async () => {
+        jest.useFakeTimers();
         const worker = new Worker('test-queue', processor, mockKodiak);
         const stopEmitter = jest.fn();
         worker.on('stop', stopEmitter);
 
         await worker.start();
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await jest.advanceTimersByTimeAsync(100);
         await worker.stop();
 
         expect(stopEmitter).toHaveBeenCalled();
@@ -122,19 +131,21 @@ describe('Worker', () => {
         });
 
         mockFetchExecute
-            .mockResolvedValueOnce(mockJob as never)
-            .mockResolvedValueOnce(null as never);
+            .mockResolvedValueOnce([mockJob] as never)
+            .mockResolvedValueOnce([] as never);
 
         processor.mockResolvedValue(undefined);
 
         await worker.start();
-        await new Promise(resolve => setTimeout(resolve, 300));
-
+        
+        await new Promise(process.nextTick);
+        await new Promise(process.nextTick);
+        
         expect(processor).toHaveBeenCalledWith(mockJob);
-
+        
         expect(mockCompleteExecute).toHaveBeenCalledWith(mockJob.id);
         expect(completedEmitter).toHaveBeenCalledWith(mockJob);
-
+        
         await worker.stop();
     });
 
@@ -151,13 +162,15 @@ describe('Worker', () => {
         const testError = new Error('Processing failed');
 
         mockFetchExecute
-            .mockResolvedValueOnce(mockJob as never)
-            .mockResolvedValueOnce(null as never);
+            .mockResolvedValueOnce([mockJob] as never)
+            .mockResolvedValueOnce([] as never);
 
         processor.mockRejectedValue(testError);
 
         await worker.start();
-        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        await new Promise(process.nextTick);
+        await new Promise(process.nextTick);
 
         expect(processor).toHaveBeenCalledWith(mockJob);
 
@@ -172,22 +185,6 @@ describe('Worker', () => {
         await worker.start();
         
         await expect(worker.start()).rejects.toThrow('Worker "test-queue" is already running');
-        
-        await worker.stop();
-    });
-
-    it('should emit error event if fetchJob fails', async () => {
-        const worker = new Worker('test-queue', processor, mockKodiak);
-        const errorEmitter = jest.fn();
-        worker.on('error', errorEmitter);
-
-        const testError = new Error('Fetch failed');
-        mockFetchExecute.mockRejectedValue(testError as never);
-
-        await worker.start();
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-        expect(errorEmitter).toHaveBeenCalledWith(testError);
         
         await worker.stop();
     });
@@ -208,8 +205,8 @@ describe('Worker', () => {
         });
 
         mockFetchExecute
-            .mockResolvedValueOnce(job1 as never)
-            .mockResolvedValueOnce(job2 as never);
+            .mockResolvedValueOnce([job1] as never)
+            .mockResolvedValueOnce([job2] as never);
 
         let releaseJob1: (value: void) => void = () => {};
         const job1Blocker = new Promise<void>((resolve) => {
@@ -239,60 +236,6 @@ describe('Worker', () => {
         await worker.stop();
     });
 
-    it('should not process if slot index is invalid', () => {
-        const worker = new Worker('test-queue', processor, mockKodiak);
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const anyWorker = worker as any;
-
-        anyWorker.isRunning = true;
-        anyWorker.processNext(999);
-
-        expect(mockFetchExecute).not.toHaveBeenCalled();
-    });
-
-    it('should handle missing semaphore (defensive programming)', async () => {
-        const worker = new Worker('test-queue', processor, mockKodiak);
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const anyWorker = worker as any;
-
-        anyWorker.isRunning = true;
-        anyWorker.activeJobs = 0;
-        anyWorker.processingSemaphore = null; 
-
-        const mockJob = createMockJob({
-            id: 'j1',
-            priority: 1,
-            maxAttempts: 1
-        });
-        mockFetchExecute.mockResolvedValueOnce(mockJob as never);
-        
-        processor.mockResolvedValue(undefined);
-
-        anyWorker.fetchJobUseCases = [{ execute: mockFetchExecute }];
-        
-        await anyWorker.processNext(0);
-
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-        expect(processor).toHaveBeenCalled();
-        expect(mockCompleteExecute).toHaveBeenCalled();
-    });
-
-    it('should abort if fetchJobUseCases exceeds totalSlots (defensive check)', () => {
-        const worker = new Worker('test-queue', processor, mockKodiak, { concurrency: 1 });
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const anyWorker = worker as any;
-
-        anyWorker.isRunning = true;
-        anyWorker.fetchJobUseCases = [{}, {}, {}]; 
-        anyWorker.processNext(0);
-
-        expect(mockFetchExecute).not.toHaveBeenCalled();
-    });
-
     it('should handle non-Error objects thrown by processor', async () => {
         const worker = new Worker('test-queue', processor, mockKodiak);
         const failedEmitter = jest.fn();
@@ -307,13 +250,15 @@ describe('Worker', () => {
         const stringError = 'I am not an Error object';
 
         mockFetchExecute
-            .mockResolvedValueOnce(mockJob as never)
-            .mockResolvedValueOnce(null as never);
+            .mockResolvedValueOnce([mockJob] as never)
+            .mockResolvedValueOnce([] as never);
 
         processor.mockRejectedValue(stringError);
 
         await worker.start();
-        await new Promise(resolve => setTimeout(resolve, 300));
+
+        await new Promise(process.nextTick);
+        await new Promise(process.nextTick);
 
         expect(mockFailExecute).toHaveBeenCalledWith(
             mockJob, 
@@ -345,13 +290,167 @@ describe('Worker', () => {
         const worker = new Worker<{ message: string }>('test-queue', processorWithProgress, mockKodiak);
         worker.on('progress', progressEmitter);
 
-        mockFetchExecute.mockResolvedValueOnce(mockJob as never);
+        mockFetchExecute.mockResolvedValueOnce([mockJob] as never);
         
         await worker.start();
-        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        await new Promise(process.nextTick);
+        await new Promise(process.nextTick);
 
         expect(processorWithProgress).toHaveBeenCalledWith(mockJob);
         expect(progressEmitter).toHaveBeenCalledWith(mockJob, 50);
+
+        await worker.stop();
+    });
+
+    it('should handle graceful shutdown timeout', async () => {
+        jest.useFakeTimers();
+        const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const worker = new Worker('test-queue', processor, mockKodiak, { gracefulShutdownTimeout: 10 });
+
+        const mockJob = createMockJob();
+        mockFetchExecute.mockResolvedValueOnce([mockJob] as never);
+
+        processor.mockImplementation(async () => {
+            return new Promise(resolve => setTimeout(resolve, 200));
+        });
+
+        await worker.start();
+        await jest.advanceTimersByTimeAsync(50);
+        await worker.stop();
+
+        expect(consoleSpy).toHaveBeenCalledWith(
+            '[Worker] Graceful shutdown failed:',
+            expect.any(Error)
+        );
+
+        consoleSpy.mockRestore();
+    });
+
+    it('should handle errors during Redis connection disconnect', async () => {
+        const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const disconnectError = new Error('Disconnect failed');
+
+        const mockRedisConnection = {
+            duplicate: jest.fn().mockReturnThis(),
+            disconnect: jest.fn().mockImplementation(() => {
+                throw disconnectError;
+            }),
+        };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (mockKodiak as any).connection = mockRedisConnection as unknown as Redis;
+
+        const worker = new Worker('test-queue', processor, mockKodiak);
+        
+        await worker.start();
+        await worker.stop();
+
+        expect(consoleSpy).toHaveBeenCalledWith('Error during blocking connection disconnect:', disconnectError);
+        expect(consoleSpy).toHaveBeenCalledWith('Error during ack connection disconnect:', disconnectError);
+
+        consoleSpy.mockRestore();
+    });
+
+    it('should emit error if getJob fails', async () => {
+        jest.useFakeTimers();
+        const errorEmitter = jest.fn();
+        const testError = new Error('Fetch failed');
+        const worker = new Worker('test-queue', processor, mockKodiak);
+        worker.on('error', errorEmitter);
+        mockFetchExecute.mockRejectedValueOnce(testError as never);
+
+        await worker.start();
+        await jest.advanceTimersByTimeAsync(100);
+        expect(errorEmitter).toHaveBeenCalledWith(testError);
+        await worker.stop();
+    });
+
+    it('should get job from buffer after lock', async () => {
+        const worker = new Worker('test-queue', processor, mockKodiak);
+        const job1 = createMockJob({ id: 'j1' });
+        const job2 = createMockJob({ id: 'j2' });
+
+        // @ts-expect-error - Accès privé pour le test
+        const bufferLock = worker.bufferLock as { acquire: () => Promise<void>, release: () => void, waiters: unknown[] };
+        
+        // @ts-expect-error - Accès privé pour le test
+        worker.jobBuffer = [job1];
+
+        await bufferLock.acquire();
+
+        // @ts-expect-error - Accès privé pour le test
+        const getJobPromise = worker.getJob();
+
+        // @ts-expect-error - Accès privé pour le test
+        worker.jobBuffer.push(job2);
+        bufferLock.release();
+
+        const result = await getJobPromise;
+
+        expect(result?.id).toBe('j1');
+
+        await worker.stop();
+    });
+
+    it('should get job from buffer if available before fetching', async () => {
+        const worker = new Worker('test-queue', processor, mockKodiak);
+        const jobInBuffer = createMockJob({ id: 'buffered-job' });
+
+        // @ts-expect-error - Accès privé pour le test
+        worker.jobBuffer = [jobInBuffer];
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const getJobResult = await (worker as any).getJob();
+        expect(getJobResult?.id).toBe('buffered-job');
+        await worker.stop();
+    });
+
+    it('should handle error during ack connection disconnect', async () => {
+        const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const disconnectError = new Error('ACK Disconnect failed');
+        
+        const mockAckConnection = { disconnect: jest.fn(() => { throw disconnectError; }) };
+        const mockBlockingConnection = { disconnect: jest.fn() };
+        (mockKodiak.connection.duplicate as jest.Mock)
+            .mockReturnValueOnce(mockAckConnection)
+            .mockReturnValueOnce(mockBlockingConnection);
+
+        const worker = new Worker('test-queue', processor, mockKodiak);
+        await worker.stop();
+
+        expect(consoleSpy).toHaveBeenCalledWith('Error during ack connection disconnect:', disconnectError);
+        expect(consoleSpy).not.toHaveBeenCalledWith('Error during blocking connection disconnect:', expect.any(Error));
+
+        consoleSpy.mockRestore();
+    });
+
+    it('should return null if job from buffer is falsy', async () => {
+        const worker = new Worker('test-queue', processor, mockKodiak);
+        
+        // @ts-expect-error - Pushing undefined to test falsy path
+        worker.jobBuffer = [undefined];
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const job = await (worker as any).getJob();
+        expect(job).toBeNull();
+
+        await worker.stop();
+    });
+
+    it('should ignore non-Error objects thrown in main process loop', async () => {
+        const errorEmitter = jest.fn();
+        const nonError = 'some string error';
+
+        mockFetchExecute.mockRejectedValueOnce(nonError as never);
+
+        const worker = new Worker('test-queue', processor, mockKodiak);
+        worker.on('error', errorEmitter);
+
+        await worker.start();
+
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        expect(errorEmitter).not.toHaveBeenCalled();
 
         await worker.stop();
     });
