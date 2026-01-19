@@ -15,8 +15,8 @@ export class Queue<T> {
         public readonly name: string,
         private readonly kodiak: Kodiak,
     ) {
-        this.connection = kodiak.connection.duplicate();
-        this.queueRepository = new RedisQueueRepository<T>(name, this.connection, kodiak.prefix);
+        this.connection = this.kodiak.connection.duplicate();
+        this.queueRepository = new RedisQueueRepository<T>(name, this.connection, this.kodiak.prefix);
         this.addJobUseCase = new AddJobUseCase<T>(this.queueRepository);
 
         this.startScheduler();
@@ -33,9 +33,9 @@ export class Queue<T> {
             try {
                 await this.queueRepository.promoteDelayedJobs();
             } catch (error) {
-                console.error(`Error promoting delayed jobs for queue ${this.name}:`, error);
+                console.error(`Error during scheduled tasks for queue ${this.name}:`, error);
             }
-        }, 1000);
+        }, 5000);
     }
 
     public async close(): Promise<void> {

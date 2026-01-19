@@ -16,9 +16,9 @@ export class Kodiak {
 
     constructor(private options: KodiakOptions) {
         // Initialize and reuse a singleton Redis client for the whole app.
-        RedisClient.init(options.connection);
+        RedisClient.init(this.options.connection);
         this.connection = RedisClient.getClient();
-        this.prefix = options.prefix ?? 'kodiak';
+        this.prefix = this.options.prefix ?? 'kodiak';
     }
 
     public createQueue<T>(name: string): Queue<T> {

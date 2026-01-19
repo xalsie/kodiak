@@ -1,4 +1,4 @@
-import { EventEmitter } from 'events';
+import { EventEmitter } from 'node:events';
 import { setTimeout } from 'node:timers/promises';
 import { Redis } from 'ioredis';
 import { Kodiak } from './kodiak.js';
@@ -32,10 +32,9 @@ export class Worker<T> extends EventEmitter {
         private opts?: WorkerOptions,
     ) {
         super();
-        // console.log(`[Worker] Initializing worker "${name}"`);
 
-        this.ackConnection = kodiak.connection.duplicate();
-        this.blockingConnection = kodiak.connection.duplicate();
+        this.ackConnection = this.kodiak.connection.duplicate();
+        this.blockingConnection = this.kodiak.connection.duplicate();
 
         const ackQueueRepository = new RedisQueueRepository<T>(
             name,
@@ -61,7 +60,6 @@ export class Worker<T> extends EventEmitter {
     }
 
     public async start(): Promise<void> {
-        // console.log(`[Worker] Starting worker "${this.name}"`);
         if (this.isRunning) {
             throw new Error(`Worker "${this.name}" is already running`);
         }
@@ -71,78 +69,75 @@ export class Worker<T> extends EventEmitter {
         const concurrency = this.opts?.concurrency ?? 1;
 
         for (let i = 0; i < concurrency; i++) {
-            this.processingPromises.push(this.processNext(i));
+            this.processingPromises.push(this.processNext());
         }
     }
 
     public async stop(): Promise<void> {
-        // console.log(`[Worker] Stopping worker "${this.name}"`);
         this.isRunning = false;
 
-        // console.log('[Worker] Waiting for active jobs to complete...', this.processingPromises.length);
-        await Promise.all(this.processingPromises);
-
         try {
-            // console.log('[Worker] Disconnecting blocking connection...');
             this.blockingConnection.disconnect();
         } catch (e) {
             console.error('Error during blocking connection disconnect:', e);
         }
 
+        const shutdownTimeout = this.opts?.gracefulShutdownTimeout ?? 30000;
+
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(shutdownTimeout).then(() => {
+                reject(new Error(`Graceful shutdown timed out after ${shutdownTimeout}ms`));
+            });
+        });
+
         try {
-            // console.log('[Worker] Disconnecting ack connection...');
+            await Promise.race([
+                Promise.all(this.processingPromises),
+                timeoutPromise,
+            ]);
+        } catch (error) {
+            console.error('[Worker] Graceful shutdown failed:', error);
+        }
+
+        try {
             this.ackConnection.disconnect();
         } catch (e) {
             console.error('Error during ack connection disconnect:', e);
         }
 
-        // console.log(`[Worker] Worker "${this.name}" stopped`);
         this.emit('stop');
     }
 
     private async getJob(): Promise<Job<T> | null> {
         if (this.jobBuffer.length > 0) {
             const job = this.jobBuffer.shift();
-            // console.log(`[Worker] Got job ${job?.id} from buffer`);
             return job ? job : null;
         }
-    
+
         await this.bufferLock.acquire();
         try {
-            if (this.jobBuffer.length > 0) {
-                const job = this.jobBuffer.shift();
-                // console.log(`[Worker] Got job ${job?.id} from buffer after lock`);
-                return job ? job : null;
-            }
-    
             const prefetch = this.opts?.prefetch ?? 10;
-            // console.log(`[Worker] Buffer empty, fetching up to ${prefetch} new jobs...`);
-            const jobs = await this.fetchJobsUseCase.execute(prefetch);
+            const lockDuration = this.opts?.lockDuration ?? 30000;
+            const jobs = await this.fetchJobsUseCase.execute(prefetch, lockDuration);
     
-            if (jobs.length > 0) {
-                // console.log(`[Worker] Fetched ${jobs.length} jobs`);
+            if (jobs && jobs.length > 0) {
                 this.jobBuffer.push(...jobs);
-                const job = this.jobBuffer.shift();
-                // console.log(`[Worker] Returning job ${job?.id} from new jobs`);
-                return job ? job : null;
+                this.jobBuffer.shift();
             }
-    
-            // console.log('[Worker] No new jobs found');
-            return null;
+
+            return jobs.length > 0 ? jobs[0] : null;
         } finally {
             this.bufferLock.release();
         }
     }
 
-    private async processNext(slotIndex: number): Promise<void> {
+    private async processNext(): Promise<void> {
         while (this.isRunning) {
             try {
-                // console.log(`[Worker slot ${slotIndex}] Waiting for job...`);
                 const job = await this.getJob();
 
                 if (job) {
                     this.activeJobs++;
-                    // console.log(`[Worker slot ${slotIndex}] Starting job ${job.id}. Active jobs: ${this.activeJobs}`);
     
                     const updateProgress = async (progress: number) => {
                         await this.updateJobProgressUseCase.execute(job.id, progress);
@@ -153,17 +148,14 @@ export class Worker<T> extends EventEmitter {
     
                     try {
                         await this.processingSemaphore.acquire();
-                        // console.log(`[Worker slot ${slotIndex}] Processing job ${job.id}`);
                         await this.processor(job);
     
                         await this.completeJobUseCase.execute(job.id);
                         job.status = 'completed';
                         job.completedAt = new Date();
-                        // console.log(`[Worker slot ${slotIndex}] Completed job ${job.id}`);
                         this.emit('completed', job);
                     } catch (error) {
                         const err = error instanceof Error ? error : new Error(String(error));
-                        console.error(`[Worker slot ${slotIndex}] Failed job ${job.id}:`, err);
                         await this.failJobUseCase.execute(job, err);
                         job.status = 'failed';
                         job.failedAt = new Date();
@@ -172,19 +164,15 @@ export class Worker<T> extends EventEmitter {
                     } finally {
                         this.processingSemaphore.release();
                         this.activeJobs--;
-                        // console.log(`[Worker slot ${slotIndex}] Finished job ${job.id}. Active jobs: ${this.activeJobs}`);
                     }
                 } else {
-                    // console.log(`[Worker slot ${slotIndex}] No job found, waiting...`);
-                    await setTimeout(1);
+                    await setTimeout(100);
                 }
             } catch (error) {
-                console.error(`[Worker slot ${slotIndex}] Error in processNext:`, error);
                 if (error instanceof Error) {
                     this.emit('error', error);
                 }
             }
         }
-        console.log(`[Worker slot ${slotIndex}] Worker stopped.`);
     }
 }
