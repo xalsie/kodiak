@@ -17,25 +17,21 @@ describe('Unit: Semaphore', () => {
         it('should decrement permits on acquisition', async () => {
             await semaphore.acquire();
             await semaphore.acquire();
-            
-            // Le troisième acquire devrait attendre
+
             const thirdAcquire = semaphore.acquire();
-            
-            // Attendre un peu pour s'assurer que le promise est en attente
+
             await new Promise(resolve => setTimeout(resolve, 10));
-            
-            // Vérifier que le promise n'est pas encore résolu
+
             let resolved = false;
             thirdAcquire.then(() => { resolved = true; });
-            
+
             await new Promise(resolve => setTimeout(resolve, 10));
             expect(resolved).toBe(false);
         });
 
         it('should increment permits on release when no waiters', () => {
             semaphore.release();
-            
-            // Maintenant nous devrions avoir 3 permits
+
             expect(async () => {
                 await semaphore.acquire();
                 await semaphore.acquire();
@@ -68,7 +64,6 @@ describe('Unit: Semaphore', () => {
             await new Promise(resolve => setTimeout(resolve, 10));
             expect(resolved).toBe(false);
             
-            // Release devrait résoudre le promise en attente
             semaphore.release();
             
             await new Promise(resolve => setTimeout(resolve, 10));
@@ -134,8 +129,7 @@ describe('Unit: Semaphore', () => {
 
             expect(results).toHaveLength(6);
             expect(results.filter(r => r.startsWith('ERROR'))).toHaveLength(0);
-            
-            // Vérifier que chaque tâche a terminé
+
             expect(results.filter(r => r.endsWith('start'))).toHaveLength(3);
             expect(results.filter(r => r.endsWith('end'))).toHaveLength(3);
         });
@@ -146,11 +140,10 @@ describe('Unit: Semaphore', () => {
             
             await semaphore.acquire();
             semaphore.release();
-            
+
             await semaphore.acquire();
             semaphore.release();
-            
-            // Le semaphore devrait être dans un état valide
+
             await expect(semaphore.acquire()).resolves.toBeUndefined();
         });
     });

@@ -1,4 +1,5 @@
 import IORedis from 'ioredis';
+import { describe, it, expect, beforeEach, beforeAll, afterAll } from '@jest/globals';
 import { RedisQueueRepository } from '../../src/infrastructure/redis/redis-queue.repository';
 import type { Job } from '../../src/domain/entities/job.entity';
 
@@ -10,18 +11,24 @@ describe('Integration: RedisQueueRepository', () => {
     let redis: IORedis;
     let repository: RedisQueueRepository<TestPayload>;
     const queueName = 'integration-test-queue';
-    const prefix = 'kodiak-test';
+    const prefix = `kodiak-test-${Math.random().toString(36).slice(2,8)}`;
 
     beforeAll(() => {
         redis = new IORedis({ host: 'localhost', port: 6379, maxRetriesPerRequest: 1 });
     });
 
     afterAll(async () => {
+        const keys = await redis.keys(`${prefix}:*`);
+        if (keys.length > 0) {
+            await redis.del(...keys);
+        }
+
         await redis.quit();
     });
 
     beforeEach(async () => {
-        await redis.flushall();
+        const keys = await redis.keys(`${prefix}:*`);
+        if (keys.length > 0) await redis.del(...keys);
         repository = new RedisQueueRepository<TestPayload>(queueName, redis, prefix);
     });
 
@@ -162,7 +169,7 @@ describe('Integration: RedisQueueRepository', () => {
         
         await repository.add(job, score, false);
 
-        await repository.fetchNext(); // Active
+        await repository.fetchNext();
         await repository.markAsCompleted('job-recurring', new Date());
 
         let state = await redis.hget(`${prefix}:jobs:job-recurring`, 'state');
@@ -175,7 +182,6 @@ describe('Integration: RedisQueueRepository', () => {
 
         await redis.hset(`${prefix}:jobs:job-recurring`, 'repeat_count', '2');
 
-        // Move the job back to active for the final completion test
         await redis.zrem(`${prefix}:queue:${queueName}:delayed`, 'job-recurring');
         await redis.zadd(`${prefix}:queue:${queueName}:active`, Date.now(), 'job-recurring');
 

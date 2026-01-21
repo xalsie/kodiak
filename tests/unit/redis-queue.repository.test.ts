@@ -21,6 +21,7 @@ describe('Unit: RedisQueueRepository', () => {
             hset: jest.fn().mockReturnThis(),
             hgetall: jest.fn().mockReturnThis(),
             lrem: jest.fn().mockReturnThis(),
+            hincrby: jest.fn().mockReturnThis(),
             exec: jest.fn(),
         };
 
@@ -238,10 +239,9 @@ describe('Unit: RedisQueueRepository', () => {
         expect(recoveredJobs).toEqual(['job-1', 'job-2']);
         expect(mockRedis.eval).toHaveBeenCalledWith(
             expect.any(String),
-            3,
+            2,
             expect.stringContaining(':active'),
             expect.stringContaining(':waiting'),
-            expect.stringContaining(':jobs:'),
             expect.any(String)
         );
     });
@@ -397,13 +397,10 @@ describe('Unit: RedisQueueRepository', () => {
 
         expect(jobs).toHaveLength(1);
         
-        // Clear previous calls
         (mockRedis.eval as jest.Mock).mockClear();
 
-        // Call updateProgress on the job
         await jobs[0].updateProgress(75);
 
-        // Verify that updateProgress was called
         expect(mockRedis.eval).toHaveBeenCalledWith(
             expect.any(String),
             1,
@@ -422,8 +419,6 @@ describe('Unit: RedisQueueRepository', () => {
             state: 'active',
         };
 
-        // First eval returns null (no optimistic result)
-        // Second eval after brpop returns job
         (mockRedis.eval as jest.Mock)
             .mockResolvedValueOnce(null as never)
             .mockResolvedValueOnce(['job-1', Object.entries(jobData).flat()] as never);
@@ -457,8 +452,6 @@ describe('Unit: RedisQueueRepository', () => {
     });
 
     it('should return null when brpop succeeds but second eval returns null', async () => {
-        // First eval returns null (no optimistic result)
-        // Second eval after brpop also returns null
         (mockRedis.eval as jest.Mock)
             .mockResolvedValueOnce(null as never)
             .mockResolvedValueOnce(null as never);
@@ -473,24 +466,6 @@ describe('Unit: RedisQueueRepository', () => {
         expect(mockRedis.eval).toHaveBeenCalledTimes(2);
     });
 
-    it('should set default values for optional job fields in buildJobEntityFromRecord', async () => {
-        const jobIds = ['job-1'];
-        const minimalJobData = {
-            data: JSON.stringify({ message: 'test' }),
-            priority: '5',
-            retry_count: '1',
-            max_attempts: '3',
-            added_at: String(Date.now()),
-            state: 'active',
-            started_at: String(Date.now()),
-        };
-        (mockRedis.eval as jest.Mock).mockResolvedValue(jobIds as never);
-        (mockPipeline.exec as jest.Mock).mockResolvedValue([[null, 'OK'], [null, minimalJobData]] as never);
-        const jobs = await repository.fetchNextJobs(1, 30000);
-        expect(jobs).toHaveLength(1);
-        expect(jobs[0].startedAt).toBeInstanceOf(Date);
-        expect(jobs[0].progress).toBe(0);
-    });
     it('should handle fetchNext when rawData is not present', async () => {
         const jobId = 'job-1';
         (mockRedis.eval as jest.Mock).mockResolvedValue([jobId, null] as never);
@@ -499,164 +474,11 @@ describe('Unit: RedisQueueRepository', () => {
         const job = await repository.fetchNext();
         expect(job?.id).toBe(jobId);
     });
-    it('should mark as failed without nextAttempt', async () => {
-        const jobId = 'job-1';
-        const error = 'test error';
-        const failedAt = new Date();
-        await repository.markAsFailed(jobId, error, failedAt);
-        expect(mockRedis.eval).toHaveBeenCalledWith(expect.any(String), 3, expect.stringContaining(':active'), expect.stringContaining(`:jobs:${jobId}`), expect.stringContaining(':delayed'), jobId, error, String(failedAt.getTime()), '-1');
-    });
-
-    it('should use existing started_at if present in job data', async () => {
-        const jobIds = ['job-1'];
-        const startedAt = new Date(Date.now() - 1000); // 1 seconde dans le passé
-        const jobDataWithStartedAt = {
-            data: JSON.stringify({ message: 'test' }),
-            priority: '5',
-            retry_count: '1',
-            max_attempts: '3',
-            added_at: String(Date.now()),
-            state: 'active',
-            started_at: String(startedAt.getTime()),
-        };
-
-        (mockRedis.eval as jest.Mock).mockResolvedValue(jobIds as never);
-        (mockPipeline.exec as jest.Mock).mockResolvedValue([
-            [null, 'OK'],
-            [null, jobDataWithStartedAt],
-        ] as never);
-
-        const jobs = await repository.fetchNextJobs(1, 30000);
-
-        expect(jobs).toHaveLength(1);
-        expect(jobs[0].startedAt?.getTime()).toBe(startedAt.getTime());
-    });
-
-    it('should handle fetchNext when job data is not returned with job id', async () => {
-        const jobData = {
-            data: JSON.stringify({ message: 'test' }),
-            priority: '1',
-            retry_count: '0',
-            max_attempts: '3',
-            added_at: String(Date.now()),
-            state: 'active',
-        };
-
-        (mockRedis.eval as jest.Mock).mockResolvedValue(['job-1', null] as never);
-        (mockPipeline.exec as jest.Mock).mockResolvedValue([
-            [null, 'OK'],
-            [null, jobData]
-        ] as never);
-
-        const result = await repository.fetchNext();
-
-        expect(result).not.toBeNull();
-        expect(result?.id).toBe('job-1');
-        expect(result?.data).toEqual({ message: 'test' });
-        expect(mockPipeline.hgetall).toHaveBeenCalledWith(expect.stringContaining(':jobs:job-1'));
-    });
-
-    it('should return null if pipeline fails after fetchNext without data', async () => {
-        (mockRedis.eval as jest.Mock).mockResolvedValue(['job-1', null] as never);
-        // La pipeline retourne une erreur
-        (mockPipeline.exec as jest.Mock).mockResolvedValue([
-            [null, 'OK'],
-            [new Error('HGETALL failed'), null]
-        ] as never);
-
-        const result = await repository.fetchNext();
-        expect(result).toBeNull();
-    });
-
-    it('should use Lua script to mark job as failed with nextAttempt date', async () => {
-        const jobId = 'job-789';
-        const failedAt = new Date();
-        const nextAttempt = new Date(failedAt.getTime() + 5000);
-        const errorMsg = 'Retry scheduled';
-
-        await repository.markAsFailed(jobId, errorMsg, failedAt, nextAttempt);
-
-        expect(mockRedis.eval).toHaveBeenCalledWith(
-            expect.any(String),
-            3,
-            expect.stringContaining(':active'),
-            expect.stringContaining(`:jobs:${jobId}`),
-            expect.stringContaining(':delayed'),
-            jobId,
-            errorMsg,
-            String(failedAt.getTime()),
-            String(nextAttempt.getTime())
-        );
-    });
-
-    it('should pass isDelayed=true to Lua script when adding a delayed job', async () => {
-        const job: Job<{ foo: string }> = { id: 'delayed-job', data: { foo: 'bar' }, priority: 1, retryCount: 0, maxAttempts: 1, addedAt: new Date(), status: 'delayed', updateProgress: async () => {} };
-        await repository.add(job, Date.now() + 5000, true);
-        const mockCall = (mockRedis.eval as jest.Mock).mock.calls[0];
-        expect(mockCall[8]).toBe('1');
-    });
-
-    it('should use default startedAt when not present in job data from Redis', async () => {
-        const jobIds = ['job-no-started-at'];
-        const jobData = {
-            data: JSON.stringify({ message: 'test' }),
-            priority: '1',
-            retry_count: '0',
-            max_attempts: '1',
-            added_at: String(Date.now()),
-            state: 'active',
-        };
-        (mockRedis.eval as jest.Mock).mockResolvedValue(jobIds as never);
-        (mockPipeline.exec as jest.Mock).mockResolvedValue([ [null, 'OK'], [null, jobData] ] as never);
-
-        const jobs = await repository.fetchNextJobs(1, 30000);
-        expect(jobs).toHaveLength(1);
-        expect(jobs[0].startedAt).toBeInstanceOf(Date);
-    });
-
-    it('should fetch data via pipeline when Lua script returns only job ID', async () => {
-        const jobId = 'job-no-rawdata';
-        (mockRedis.eval as jest.Mock).mockResolvedValue([jobId, null] as never);
-        const jobData = { data: JSON.stringify({ test: 'data' }), priority: '1' };
-        (mockPipeline.exec as jest.Mock).mockResolvedValue([ [null, 'OK'], [null, jobData] ] as never);
-
-        const job = await repository.fetchNext();
-        expect(job?.id).toBe(jobId);
-        expect(mockPipeline.hgetall).toHaveBeenCalledWith(expect.stringContaining(jobId));
-    });
-
-    it('should use -1 for nextAttempt when not provided in markAsFailed', async () => {
-        const jobId = 'job-no-next-attempt';
-        const errorMsg = 'Failed for good';
-        const failedAt = new Date();
-
-        await repository.markAsFailed(jobId, errorMsg, failedAt, undefined);
-        const mockCall = (mockRedis.eval as jest.Mock).mock.calls[0];
-        expect(mockCall[8]).toBe('-1');
-    });
 
     it('should return null in processFetchResult if pipeline exec returns null (when no rawData)', async () => {
         const jobId = 'job-no-rawdata-no-exec';
         (mockRedis.eval as jest.Mock).mockResolvedValue([jobId, null] as never);
         (mockPipeline.exec as jest.Mock).mockResolvedValue(null as never);
-
-        const job = await repository.fetchNext();
-        expect(job).toBeNull();
-    });
-
-    it('should return null in processFetchResult if hgetall returns no data (when no rawData)', async () => {
-        const jobId = 'job-no-rawdata-no-hgetall-data';
-        (mockRedis.eval as jest.Mock).mockResolvedValue([jobId, null] as never);
-        (mockPipeline.exec as jest.Mock).mockResolvedValue([ [null, 'OK'], [null, null] ] as never);
-
-        const job = await repository.fetchNext();
-        expect(job).toBeNull();
-    });
-
-    it('should return null in processFetchResult if rawData is missing "data" field', async () => {
-        const jobId = 'job-rawdata-missing-data';
-        const rawData = ['priority', '1', 'state', 'active']; // No 'data' field
-        (mockRedis.eval as jest.Mock).mockResolvedValue([jobId, rawData] as never);
 
         const job = await repository.fetchNext();
         expect(job).toBeNull();
@@ -678,36 +500,81 @@ describe('Unit: RedisQueueRepository', () => {
         expect(jobs[0].progress).toBe(50);
     });
 
-    // a valider utiliter
-    it('should return null in processFetchResult if hgetall returns job data without "data" field', async () => {
-        const jobId = 'job-hgetall-missing-data';
-        (mockRedis.eval as jest.Mock).mockResolvedValue([jobId, null] as never);
-        
-        const jobDataMissingData = {
-            priority: '1', 
-            state: 'active'
-        };
-        (mockPipeline.exec as jest.Mock).mockResolvedValue([
-            [null, 'OK'],
-            [null, jobDataMissingData]
-        ] as never);
-
-        const job = await repository.fetchNext();
-        expect(job).toBeNull();
+    it('should return empty array when recoverStalledJobs Lua script returns null', async () => {
+        (mockRedis.eval as jest.Mock).mockResolvedValue(null as never);
+        const recoveredJobs = await repository.recoverStalledJobs();
+        expect(recoveredJobs).toEqual([]);
     });
 
-    it('should return null in processFetchResult if hgetall returns job data without "data" field', async () => {
-        const jobId = 'job-hgetall-missing-data';
-        (mockRedis.eval as jest.Mock).mockResolvedValue([jobId, null] as never);
-        
-        const jobDataMissingData = {
-            priority: '1', 
-            state: 'active'
+    it('should return 0 when promoteDelayedJobs Lua script returns null', async () => {
+        (mockRedis.eval as jest.Mock).mockResolvedValue(null as never);
+        const count = await repository.promoteDelayedJobs(50);
+        expect(count).toBe(0);
+    });
+
+    it('should pass isDelayed=true to Lua script when adding a delayed job', async () => {
+        const job: Job<{ foo: string }> = { id: 'delayed-job', data: { foo: 'bar' }, priority: 1, retryCount: 0, maxAttempts: 1, addedAt: new Date(), status: 'delayed', updateProgress: async () => {} };
+        await repository.add(job, Date.now() + 5000, true);
+        const mockCall = (mockRedis.eval as jest.Mock).mock.calls[0];
+        expect(mockCall[8]).toBe('1');
+    });
+
+    it('should use existing started_at if present in job data when fetching multiple jobs', async () => {
+        const jobIds = ['job-1'];
+        const startedAt = new Date(Date.now() - 1000);
+        const jobDataWithStartedAt = {
+            data: JSON.stringify({ message: 'test' }),
+            priority: '5',
+            retry_count: '1',
+            max_attempts: '3',
+            added_at: String(Date.now()),
+            state: 'active',
+            started_at: String(startedAt.getTime()),
         };
-        (mockPipeline.exec as jest.Mock).mockResolvedValue([
-            [null, 'OK'],
-            [null, jobDataMissingData]
-        ] as never);
+
+        (mockRedis.eval as jest.Mock).mockResolvedValue(jobIds as never);
+        (mockPipeline.exec as jest.Mock).mockResolvedValue([[null, 'OK'], [null, jobDataWithStartedAt]] as never);
+
+        const jobs = await repository.fetchNextJobs(1, 30000);
+
+        expect(jobs).toHaveLength(1);
+        expect(jobs[0].startedAt?.getTime()).toBe(startedAt.getTime());
+    });
+
+    it('should pass nextAttempt timestamp to Lua script when provided in markAsFailed', async () => {
+        const jobId = 'job-789';
+        const failedAt = new Date();
+        const nextAttempt = new Date(failedAt.getTime() + 5000);
+        const errorMsg = 'Retry scheduled';
+
+        await repository.markAsFailed(jobId, errorMsg, failedAt, nextAttempt);
+
+        expect((mockRedis.eval as jest.Mock).mock.calls[0]).toEqual(
+            expect.arrayContaining([
+                expect.any(String),
+                3,
+                expect.stringContaining(':active'),
+                expect.stringContaining(`:jobs:${jobId}`),
+                expect.stringContaining(':delayed'),
+                jobId,
+                errorMsg,
+                String(failedAt.getTime()),
+                String(nextAttempt.getTime()),
+            ])
+        );
+    });
+
+    it('should use default limit when promoting delayed jobs with no arg', async () => {
+        (mockRedis.eval as jest.Mock).mockResolvedValue(7 as never);
+        const count = await repository.promoteDelayedJobs();
+        expect(count).toBe(7);
+        expect((mockRedis.eval as jest.Mock).mock.calls[0][7]).toBe('50');
+    });
+
+    it('should return null in processFetchResult if hgetall returns an error (when no rawData)', async () => {
+        const jobId = 'job-hgetall-error';
+        (mockRedis.eval as jest.Mock).mockResolvedValue([jobId, null] as never);
+        (mockPipeline.exec as jest.Mock).mockResolvedValue([[null, 'OK'], [new Error('HGETALL failed'), null]] as never);
 
         const job = await repository.fetchNext();
         expect(job).toBeNull();

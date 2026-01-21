@@ -44,7 +44,7 @@ describe('FailJobUseCase', () => {
             job.id,
             'Job processing failed',
             expect.any(Date),
-            undefined // nextAttempt
+            undefined
         );
     });
 
@@ -71,11 +71,8 @@ describe('FailJobUseCase', () => {
     });
 
     it('should calculate exponential backoff correctly', async () => {
-        // Retry 1 (attemptsMade = 1): 1000 * 2^0 = 1000
         const job1 = createMockJob({ retryCount: 0, backoff: { type: 'exponential', delay: 1000 } });
-        // Retry 2 (attemptsMade = 2): 1000 * 2^1 = 2000
         const job2 = createMockJob({ retryCount: 1, backoff: { type: 'exponential', delay: 1000 } });
-        // Retry 3 (attemptsMade = 3): 1000 * 2^2 = 4000
         const job3 = createMockJob({ retryCount: 2, backoff: { type: 'exponential', delay: 1000 } });
 
         const now = Date.now();
@@ -101,14 +98,13 @@ describe('FailJobUseCase', () => {
 
     it('should use custom backoff strategy if provided', async () => {
         const customStrategy: BackoffStrategy = (attempts, delay) => {
-            return delay * attempts * 10; // Custom logic
+            return delay * attempts * 10;
         };
 
         failJobUseCase = new FailJobUseCase(mockQueueRepository, {
             'custom-linear': customStrategy
         });
 
-        // Retry 1: 100 * 1 * 10 = 1000
         const job = createMockJob({ 
             retryCount: 0, 
             backoff: { type: 'custom-linear', delay: 100 } 

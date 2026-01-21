@@ -60,7 +60,7 @@ describe('Worker', () => {
 
         mockFetchExecute.mockReset();
         mockFetchExecute.mockImplementation(async () => {
-            await new Promise(resolve => setTimeout(resolve, 10)); // Simulate Redis latency/blocking
+            await new Promise(resolve => setTimeout(resolve, 10));
             return [];
         });
 
@@ -190,7 +190,6 @@ describe('Worker', () => {
     });
 
     it('should respect semaphore concurrency (prefetch logic)', async () => {
-        // Concurrency 1, Prefetch 1 => 2 Fetchers.
         const worker = new Worker('test-queue', processor, mockKodiak, { concurrency: 1, prefetch: 1 });
 
         const job1 = createMockJob({

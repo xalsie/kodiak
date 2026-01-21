@@ -8,10 +8,12 @@ jest.unstable_mockModule('../../src/application/use-cases/add-job.use-case.js', 
 }));
 
 const mockPromoteDelayedJobs = jest.fn().mockResolvedValue(0 as never);
+const mockRecoverStalledJobs = jest.fn().mockResolvedValue([] as never);
+
 jest.unstable_mockModule('../../src/infrastructure/redis/redis-queue.repository.js', () => ({
     RedisQueueRepository: jest.fn().mockImplementation(() => ({
         promoteDelayedJobs: mockPromoteDelayedJobs,
-        recoverStalledJobs: jest.fn().mockResolvedValue([] as never),
+        recoverStalledJobs: mockRecoverStalledJobs,
         add: jest.fn(),
     }))
 }));
@@ -35,6 +37,7 @@ describe('Unit: Queue', () => {
             prefix: 'test'
         } as unknown as Kodiak;
         mockPromoteDelayedJobs.mockClear();
+        mockRecoverStalledJobs.mockClear();
     });
 
     afterEach(() => {
@@ -104,21 +107,19 @@ describe('Unit: Queue', () => {
     it('should call AddJobUseCase when adding a job', async () => {
         const queue = new Queue('test-queue', mockKodiak);
         const data = { foo: 'bar' };
-        
+
         await queue.add('job-1', data);
 
         expect(mockExecute).toHaveBeenCalledWith('job-1', data, undefined);
-        
+
         await queue.close();
     });
 
     it('should handle close when schedulerInterval is null', async () => {
         const queue = new Queue('test-queue', mockKodiak);
-        
-        // Fermer une première fois pour mettre schedulerInterval à null
+
         await queue.close();
-        
-        // Fermer une seconde fois - ne devrait pas planter
+
         await expect(queue.close()).resolves.not.toThrow();
     });
 
@@ -126,11 +127,65 @@ describe('Unit: Queue', () => {
         const queue = new Queue('test-queue', mockKodiak);
         const data = { foo: 'bar' };
         const options = { priority: 5, attempts: 3 };
-        
+
         await queue.add('job-2', data, options);
 
         expect(mockExecute).toHaveBeenCalledWith('job-2', data, options);
+
+        await queue.close();
+    });
+
+    it('should log info when stalled jobs recovered', async () => {
+        mockRecoverStalledJobs.mockResolvedValueOnce(['job-1'] as never);
+        const infoSpy = jest.spyOn(console, 'info').mockImplementation(() => {});
+
+        let scheduledCb: (() => Promise<void>) | null = null;
+
+        const setIntervalSpy = jest.spyOn(global, 'setInterval').mockImplementation((cb: TimerHandler): NodeJS.Timeout => {
+            scheduledCb = cb as () => Promise<void>;
+            return 1 as unknown as NodeJS.Timeout;
+        });
+
+        const queue = new Queue('test-queue', mockKodiak);
+
+        if (typeof scheduledCb === 'function') {
+            await (scheduledCb as () => Promise<void>)();
+        }
+
+        expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('[Queue:test-queue] Recovered 1 stalled job(s): job-1'));
+
+        setIntervalSpy.mockRestore();
+        infoSpy.mockRestore();
+
+        await queue.close();
+    });
+
+    it('should handle errors in Error during recoverStalledJobs for queue', async () => {
+        const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
         
+        mockRecoverStalledJobs.mockRejectedValueOnce(new Error('Redis error') as never);
+        
+        let scheduledCb: (() => Promise<void>) | null = null;
+        
+        const setIntervalSpy = jest.spyOn(global, 'setInterval').mockImplementation((cb: TimerHandler): NodeJS.Timeout => {
+            scheduledCb = cb as () => Promise<void>;
+            return 1 as unknown as NodeJS.Timeout;
+        });
+
+        const queue = new Queue('test-queue', mockKodiak);
+
+        if (typeof scheduledCb === 'function') {
+            await (scheduledCb as () => Promise<void>)();
+        }
+
+        expect(consoleSpy).toHaveBeenCalledWith(
+            expect.stringContaining('Error during recoverStalledJobs for queue'),
+            expect.any(Error)
+        );
+
+        setIntervalSpy.mockRestore();
+        consoleSpy.mockRestore();
+
         await queue.close();
     });
 });

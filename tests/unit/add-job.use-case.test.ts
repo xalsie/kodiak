@@ -126,7 +126,6 @@ describe('AddJobUseCase', () => {
         await addJobUseCase.execute(id, data, options);
         const afterCall = Date.now();
 
-        // Score calculation: priority * PRIORITY_MULTIPLIER + (now + delay)
         const minExpectedScore = 1 * PRIORITY_MULTIPLIER + beforeCall + delay;
         const maxExpectedScore = 1 * PRIORITY_MULTIPLIER + afterCall + delay;
 
