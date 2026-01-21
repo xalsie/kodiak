@@ -1,15 +1,15 @@
-import { EventEmitter } from 'node:events';
-import { setTimeout } from 'node:timers/promises';
-import { Redis } from 'ioredis';
-import { Kodiak } from './kodiak.js';
-import { CompleteJobUseCase } from '../application/use-cases/complete-job.use-case.js';
-import { FailJobUseCase } from '../application/use-cases/fail-job.use-case.js';
-import { UpdateJobProgressUseCase } from '../application/use-cases/update-job-progress.use-case.js';
-import { RedisQueueRepository } from '../infrastructure/redis/redis-queue.repository.js';
-import { Semaphore } from '../utils/semaphore.js';
-import type { WorkerOptions } from '../application/dtos/worker-options.dto.js';
-import type { Job } from '../domain/entities/job.entity.js';
-import { FetchJobsUseCase } from '../application/use-cases/fetch-jobs.use-case.js';
+import { EventEmitter } from "node:events";
+import { setTimeout } from "node:timers/promises";
+import { Redis } from "ioredis";
+import { Kodiak } from "./kodiak.js";
+import { CompleteJobUseCase } from "../application/use-cases/complete-job.use-case.js";
+import { FailJobUseCase } from "../application/use-cases/fail-job.use-case.js";
+import { UpdateJobProgressUseCase } from "../application/use-cases/update-job-progress.use-case.js";
+import { RedisQueueRepository } from "../infrastructure/redis/redis-queue.repository.js";
+import { Semaphore } from "../utils/semaphore.js";
+import type { WorkerOptions } from "../application/dtos/worker-options.dto.js";
+import type { Job } from "../domain/entities/job.entity.js";
+import { FetchJobsUseCase } from "../application/use-cases/fetch-jobs.use-case.js";
 
 export class Worker<T> extends EventEmitter {
     private readonly fetchJobsUseCase: FetchJobsUseCase<T>;
@@ -49,10 +49,7 @@ export class Worker<T> extends EventEmitter {
 
         this.fetchJobsUseCase = new FetchJobsUseCase<T>(blockingQueueRepository);
         this.completeJobUseCase = new CompleteJobUseCase<T>(ackQueueRepository);
-        this.failJobUseCase = new FailJobUseCase<T>(
-            ackQueueRepository,
-            opts?.backoffStrategies
-        );
+        this.failJobUseCase = new FailJobUseCase<T>(ackQueueRepository, opts?.backoffStrategies);
         this.updateJobProgressUseCase = new UpdateJobProgressUseCase<T>(ackQueueRepository);
 
         const concurrency = this.opts?.concurrency ?? 1;
@@ -64,8 +61,8 @@ export class Worker<T> extends EventEmitter {
             throw new Error(`Worker "${this.name}" is already running`);
         }
         this.isRunning = true;
-        this.emit('start');
-        
+        this.emit("start");
+
         const concurrency = this.opts?.concurrency ?? 1;
 
         for (let i = 0; i < concurrency; i++) {
@@ -79,7 +76,7 @@ export class Worker<T> extends EventEmitter {
         try {
             this.blockingConnection.disconnect();
         } catch (e) {
-            console.error('Error during blocking connection disconnect:', e);
+            console.error("Error during blocking connection disconnect:", e);
         }
 
         const shutdownTimeout = this.opts?.gracefulShutdownTimeout ?? 30000;
@@ -91,21 +88,18 @@ export class Worker<T> extends EventEmitter {
         });
 
         try {
-            await Promise.race([
-                Promise.all(this.processingPromises),
-                timeoutPromise,
-            ]);
+            await Promise.race([Promise.all(this.processingPromises), timeoutPromise]);
         } catch (error) {
-            console.error('[Worker] Graceful shutdown failed:', error);
+            console.error("[Worker] Graceful shutdown failed:", error);
         }
 
         try {
             this.ackConnection.disconnect();
         } catch (e) {
-            console.error('Error during ack connection disconnect:', e);
+            console.error("Error during ack connection disconnect:", e);
         }
 
-        this.emit('stop');
+        this.emit("stop");
     }
 
     private async getJob(): Promise<Job<T> | null> {
@@ -119,7 +113,7 @@ export class Worker<T> extends EventEmitter {
             const prefetch = this.opts?.prefetch ?? 10;
             const lockDuration = this.opts?.lockDuration ?? 30000;
             const jobs = await this.fetchJobsUseCase.execute(prefetch, lockDuration);
-    
+
             if (jobs && jobs.length > 0) {
                 this.jobBuffer.push(...jobs);
                 this.jobBuffer.shift();
@@ -138,29 +132,29 @@ export class Worker<T> extends EventEmitter {
 
                 if (job) {
                     this.activeJobs++;
-    
+
                     const updateProgress = async (progress: number) => {
                         await this.updateJobProgressUseCase.execute(job.id, progress);
                         job.progress = progress;
-                        this.emit('progress', job, progress);
+                        this.emit("progress", job, progress);
                     };
                     job.updateProgress = updateProgress;
-    
+
                     try {
                         await this.processingSemaphore.acquire();
                         await this.processor(job);
-    
+
                         await this.completeJobUseCase.execute(job.id);
-                        job.status = 'completed';
+                        job.status = "completed";
                         job.completedAt = new Date();
-                        this.emit('completed', job);
+                        this.emit("completed", job);
                     } catch (error) {
                         const err = error instanceof Error ? error : new Error(String(error));
                         await this.failJobUseCase.execute(job, err);
-                        job.status = 'failed';
+                        job.status = "failed";
                         job.failedAt = new Date();
                         job.error = err.message;
-                        this.emit('failed', job, err);
+                        this.emit("failed", job, err);
                     } finally {
                         this.processingSemaphore.release();
                         this.activeJobs--;
@@ -170,7 +164,7 @@ export class Worker<T> extends EventEmitter {
                 }
             } catch (error) {
                 if (error instanceof Error) {
-                    this.emit('error', error);
+                    this.emit("error", error);
                 }
             }
         }

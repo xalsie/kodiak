@@ -1,4 +1,4 @@
-import { BackoffStrategy } from '../../domain/strategies/backoff.strategy.js';
+import { BackoffStrategy } from "../../domain/strategies/backoff.strategy.js";
 
 export interface WorkerOptions {
     concurrency?: number;

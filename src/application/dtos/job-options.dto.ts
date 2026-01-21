@@ -1,5 +1,5 @@
 export interface BackoffOptions {
-    type: 'fixed' | 'exponential';
+    type: "fixed" | "exponential";
     delay: number;
 }
 

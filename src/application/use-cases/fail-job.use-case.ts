@@ -1,11 +1,11 @@
-import type { IQueueRepository } from '../../domain/repositories/queue.repository.js';
-import type { Job } from '../../domain/entities/job.entity.js';
-import type { BackoffStrategy } from '../../domain/strategies/backoff.strategy.js';
+import type { IQueueRepository } from "../../domain/repositories/queue.repository.js";
+import type { Job } from "../../domain/entities/job.entity.js";
+import type { BackoffStrategy } from "../../domain/strategies/backoff.strategy.js";
 
 export class FailJobUseCase<T> {
     constructor(
         private readonly queueRepository: IQueueRepository<T>,
-        private readonly backoffStrategies: Record<string, BackoffStrategy> = {}
+        private readonly backoffStrategies: Record<string, BackoffStrategy> = {},
     ) {}
 
     async execute(job: Job<T>, error: Error): Promise<void> {
@@ -14,12 +14,12 @@ export class FailJobUseCase<T> {
         if (job.backoff) {
             const { type, delay } = job.backoff;
             const attemptsMade = job.retryCount + 1;
-            
+
             let backoffDelay: number | null = null;
 
-            if (type === 'fixed') {
+            if (type === "fixed") {
                 backoffDelay = delay;
-            } else if (type === 'exponential') {
+            } else if (type === "exponential") {
                 backoffDelay = delay * Math.pow(2, attemptsMade - 1);
             } else if (this.backoffStrategies[type]) {
                 backoffDelay = this.backoffStrategies[type](attemptsMade, delay);

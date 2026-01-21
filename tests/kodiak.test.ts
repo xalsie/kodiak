@@ -1,5 +1,5 @@
-describe('Kodiak', () => {
-    it('should be true', () => {
+describe("Kodiak", () => {
+    it("should be true", () => {
         expect(true).toBe(true);
     });
 });
