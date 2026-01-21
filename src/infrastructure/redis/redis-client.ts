@@ -45,8 +45,9 @@ export class RedisClient {
     }
 
     public static getClient(): Redis {
-        if (!this.instance)
+        if (!this.instance) {
             throw new Error("RedisClient: not initialized. Call RedisClient.init(options) first.");
+        }
         return this.instance;
     }
 

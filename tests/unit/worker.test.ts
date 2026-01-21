@@ -185,7 +185,7 @@ describe("Worker", () => {
         const worker = new Worker("test-queue", processor, mockKodiak);
         await worker.start();
 
-        await expect(worker.start()).rejects.toThrow('Worker "test-queue" is already running');
+        await expect(worker.start()).rejects.toThrow("Worker \"test-queue\" is already running");
 
         await worker.stop();
     });
