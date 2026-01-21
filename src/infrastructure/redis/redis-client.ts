@@ -1,17 +1,8 @@
 import { Redis, type RedisOptions } from 'ioredis';
 
-/**
- * RedisClient - a singleton wrapper around an ioredis Redis instance.
- *
- * Goals:
- * - Provide a single shared Redis client across the application.
- * - Apply safe default options for long-running workloads (benchmarks).
- * - Expose typed helpers for initialization and shutdown.
- */
 export class RedisClient {
     private static instance: Redis | null = null;
 
-    /** Initialize the singleton Redis instance. Calling multiple times is idempotent. */
     public static init(options: RedisOptions): void {
         if (this.instance) {
             const status = (this.instance as unknown as { status?: string }).status;
@@ -53,18 +44,15 @@ export class RedisClient {
         });
     }
 
-    /** Returns the underlying ioredis client. Throws if not initialized. */
     public static getClient(): Redis {
         if (!this.instance) throw new Error('RedisClient: not initialized. Call RedisClient.init(options) first.');
         return this.instance;
     }
 
-    /** Whether the client has been initialized. */
     public static isInitialized(): boolean {
         return this.instance !== null;
     }
 
-    /** Quit and cleanup the underlying connection. */
     public static async quit(): Promise<void> {
         if (!this.instance) return;
         try {

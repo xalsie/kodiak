@@ -46,16 +46,27 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
     }
 
     async recoverStalledJobs(): Promise<string[]> {
-        return this.connection.eval(
+        const ids = (await this.connection.eval(
             this.recoverStalledJobsScript,
-            3,
+            2,
             this.activeQueueKey,
             this.waitingQueueKey,
-            this.jobKeyPrefix,
             String(Date.now())
-        ) as Promise<string[]>;
+        )) as string[];
+
+        if (!ids || ids.length === 0) return [];
+
+        const now = Date.now();
+        const pipeline = this.connection.pipeline();
+        for (const id of ids) {
+            const jobKey = `${this.jobKeyPrefix}${id}`;
+            pipeline.hincrby(jobKey, 'retry_count', 1);
+            pipeline.hset(jobKey, 'state', 'waiting', 'updated_at', String(now));
+        }
+        await pipeline.exec();
+        return ids;
     }
-    
+
     async add(job: Job<T>, score: number, isDelayed: boolean): Promise<void> {
         const jobKey = `${this.jobKeyPrefix}${job.id}`;
 

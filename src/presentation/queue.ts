@@ -9,6 +9,7 @@ export class Queue<T> {
     private readonly addJobUseCase: AddJobUseCase<T>;
     private readonly queueRepository: RedisQueueRepository<T>;
     private schedulerInterval: NodeJS.Timeout | null = null;
+    private recoveringStalledJobs = false;
     private readonly connection: Redis;
 
     constructor(
@@ -34,6 +35,19 @@ export class Queue<T> {
                 await this.queueRepository.promoteDelayedJobs();
             } catch (error) {
                 console.error(`Error during scheduled tasks for queue ${this.name}:`, error);
+            }
+
+            if (this.recoveringStalledJobs) return;
+            this.recoveringStalledJobs = true;
+            try {
+                const recovered = await this.queueRepository.recoverStalledJobs();
+                if (recovered && Array.isArray(recovered) && recovered.length > 0) {
+                    console.info(`[Queue:${this.name}] Recovered ${recovered.length} stalled job(s): ${recovered.join(', ')}`);
+                }
+            } catch (error) {
+                console.error(`Error during recoverStalledJobs for queue ${this.name}:`, error);
+            } finally {
+                this.recoveringStalledJobs = false;
             }
         }, 5000);
     }

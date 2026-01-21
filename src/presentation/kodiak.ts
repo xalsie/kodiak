@@ -15,7 +15,6 @@ export class Kodiak {
     public readonly prefix: string;
 
     constructor(private options: KodiakOptions) {
-        // Initialize and reuse a singleton Redis client for the whole app.
         RedisClient.init(this.options.connection);
         this.connection = RedisClient.getClient();
         this.prefix = this.options.prefix ?? 'kodiak';
@@ -33,10 +32,6 @@ export class Kodiak {
         return new Worker<T>(name, processor, this, opts);
     }
 
-    /**
-     * Close the underlying Redis client managed by the singleton.
-     * Prefer calling this over calling `kodiak.connection.quit()` directly.
-     */
     public async close(): Promise<void> {
         await RedisClient.quit();
     }
