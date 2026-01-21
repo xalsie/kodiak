@@ -1,19 +1,19 @@
-import IORedis from 'ioredis';
-import { describe, it, expect, beforeEach, beforeAll, afterAll } from '@jest/globals';
-import { RedisQueueRepository } from '../../src/infrastructure/redis/redis-queue.repository.js';
+import IORedis from "ioredis";
+import { describe, it, expect, beforeEach, beforeAll, afterAll } from "@jest/globals";
+import { RedisQueueRepository } from "../../src/infrastructure/redis/redis-queue.repository.js";
 
 interface Payload {
     foo: string;
 }
 
-describe('Integration: stalled jobs recovery', () => {
+describe("Integration: stalled jobs recovery", () => {
     let redis: IORedis;
     let repository: RedisQueueRepository<Payload>;
-    const queueName = 'stalled-recovery-queue';
-    const prefix = `kodiak-test-${Math.random().toString(36).slice(2,8)}`;
+    const queueName = "stalled-recovery-queue";
+    const prefix = `kodiak-test-${Math.random().toString(36).slice(2, 8)}`;
 
     beforeAll(() => {
-        redis = new IORedis({ host: 'localhost', port: 6379, maxRetriesPerRequest: 1 });
+        redis = new IORedis({ host: "localhost", port: 6379, maxRetriesPerRequest: 1 });
     });
 
     afterAll(async () => {
@@ -31,16 +31,22 @@ describe('Integration: stalled jobs recovery', () => {
         repository = new RedisQueueRepository<Payload>(queueName, redis, prefix);
     });
 
-    it('should move an expired active job back to waiting and increment retry_count', async () => {
-        const jobId = 'stalled-job-1';
+    it("should move an expired active job back to waiting and increment retry_count", async () => {
+        const jobId = "stalled-job-1";
         const jobKey = `${prefix}:jobs:${jobId}`;
 
-        await redis.hset(jobKey,
-            'data', JSON.stringify({ foo: 'bar' }),
-            'priority', '10',
-            'retry_count', '0',
-            'max_attempts', '3',
-            'added_at', String(Date.now())
+        await redis.hset(
+            jobKey,
+            "data",
+            JSON.stringify({ foo: "bar" }),
+            "priority",
+            "10",
+            "retry_count",
+            "0",
+            "max_attempts",
+            "3",
+            "added_at",
+            String(Date.now()),
         );
 
         const expiredScore = Date.now() - 1000;
@@ -61,7 +67,7 @@ describe('Integration: stalled jobs recovery', () => {
         const waiting = await redis.lrange(`${prefix}:queue:${queueName}:waiting`, 0, -1);
         expect(waiting).toContain(jobId);
 
-        const retry = await redis.hget(jobKey, 'retry_count');
-        expect(retry).toBe('1');
+        const retry = await redis.hget(jobKey, "retry_count");
+        expect(retry).toBe("1");
     });
 });

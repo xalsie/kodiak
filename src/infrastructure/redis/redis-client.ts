@@ -1,4 +1,4 @@
-import { Redis, type RedisOptions } from 'ioredis';
+import { Redis, type RedisOptions } from "ioredis";
 
 export class RedisClient {
     private static instance: Redis | null = null;
@@ -6,10 +6,10 @@ export class RedisClient {
     public static init(options: RedisOptions): void {
         if (this.instance) {
             const status = (this.instance as unknown as { status?: string }).status;
-            if (status === 'end' || status === 'close') {
+            if (status === "end" || status === "close") {
                 this.instance = null;
             } else {
-                console.warn('RedisClient: already initialized, ignoring subsequent init call');
+                console.warn("RedisClient: already initialized, ignoring subsequent init call");
                 return;
             }
         }
@@ -25,27 +25,28 @@ export class RedisClient {
 
         this.instance = new Redis(merged);
 
-        this.instance.on('error', (err: Error) => {
-            console.error('[RedisClient] connection error:', err.message);
+        this.instance.on("error", (err: Error) => {
+            console.error("[RedisClient] connection error:", err.message);
         });
 
-        this.instance.on('end', () => {
-            console.warn('[RedisClient] connection ended');
+        this.instance.on("end", () => {
+            console.warn("[RedisClient] connection ended");
             RedisClient.instance = null;
         });
 
-        this.instance.on('close', () => {
-            console.warn('[RedisClient] connection closed');
+        this.instance.on("close", () => {
+            console.warn("[RedisClient] connection closed");
             RedisClient.instance = null;
         });
 
-        this.instance.on('connect', () => {
-            console.info('[RedisClient] connected to Redis');
+        this.instance.on("connect", () => {
+            console.info("[RedisClient] connected to Redis");
         });
     }
 
     public static getClient(): Redis {
-        if (!this.instance) throw new Error('RedisClient: not initialized. Call RedisClient.init(options) first.');
+        if (!this.instance)
+            throw new Error("RedisClient: not initialized. Call RedisClient.init(options) first.");
         return this.instance;
     }
 

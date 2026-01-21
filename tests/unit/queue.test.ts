@@ -1,40 +1,40 @@
-import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 
 const mockExecute = jest.fn();
-jest.unstable_mockModule('../../src/application/use-cases/add-job.use-case.js', () => ({
+jest.unstable_mockModule("../../src/application/use-cases/add-job.use-case.js", () => ({
     AddJobUseCase: jest.fn().mockImplementation(() => ({
-        execute: mockExecute
-    }))
+        execute: mockExecute,
+    })),
 }));
 
 const mockPromoteDelayedJobs = jest.fn().mockResolvedValue(0 as never);
 const mockRecoverStalledJobs = jest.fn().mockResolvedValue([] as never);
 
-jest.unstable_mockModule('../../src/infrastructure/redis/redis-queue.repository.js', () => ({
+jest.unstable_mockModule("../../src/infrastructure/redis/redis-queue.repository.js", () => ({
     RedisQueueRepository: jest.fn().mockImplementation(() => ({
         promoteDelayedJobs: mockPromoteDelayedJobs,
         recoverStalledJobs: mockRecoverStalledJobs,
         add: jest.fn(),
-    }))
+    })),
 }));
 
-const { Queue } = await import('../../src/presentation/queue.js');
-import { Kodiak } from '../../src/presentation/kodiak.js';
+const { Queue } = await import("../../src/presentation/queue.js");
+import { Kodiak } from "../../src/presentation/kodiak.js";
 
-describe('Unit: Queue', () => {
+describe("Unit: Queue", () => {
     let mockKodiak: Kodiak;
-    
+
     beforeEach(() => {
         jest.useFakeTimers();
 
         const mockConnection = {
             duplicate: jest.fn(() => mockConnection),
-            quit: jest.fn().mockResolvedValue('OK' as never),
+            quit: jest.fn().mockResolvedValue("OK" as never),
         };
 
         mockKodiak = {
             connection: mockConnection,
-            prefix: 'test'
+            prefix: "test",
         } as unknown as Kodiak;
         mockPromoteDelayedJobs.mockClear();
         mockRecoverStalledJobs.mockClear();
@@ -44,8 +44,8 @@ describe('Unit: Queue', () => {
         jest.useRealTimers();
     });
 
-    it('should start a scheduler that calls promoteDelayedJobs periodically', async () => {
-        const queue = new Queue('test-queue', mockKodiak);
+    it("should start a scheduler that calls promoteDelayedJobs periodically", async () => {
+        const queue = new Queue("test-queue", mockKodiak);
 
         jest.advanceTimersByTime(5000);
 
@@ -58,8 +58,8 @@ describe('Unit: Queue', () => {
         await queue.close();
     });
 
-    it('should stop the scheduler when closed', async () => {
-        const queue = new Queue('test-queue', mockKodiak);
+    it("should stop the scheduler when closed", async () => {
+        const queue = new Queue("test-queue", mockKodiak);
 
         jest.advanceTimersByTime(5000);
         expect(mockPromoteDelayedJobs).toHaveBeenCalledTimes(1);
@@ -70,89 +70,95 @@ describe('Unit: Queue', () => {
         expect(mockPromoteDelayedJobs).toHaveBeenCalledTimes(1);
     });
 
-    it('should handle errors in scheduler loop', async () => {
-        const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-        mockPromoteDelayedJobs.mockRejectedValueOnce(new Error('Redis error') as never);
+    it("should handle errors in scheduler loop", async () => {
+        const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+        mockPromoteDelayedJobs.mockRejectedValueOnce(new Error("Redis error") as never);
 
-        const queue = new Queue('test-queue', mockKodiak);
-        
+        const queue = new Queue("test-queue", mockKodiak);
+
         jest.advanceTimersByTime(5000);
-        
+
         await Promise.resolve();
 
         expect(mockPromoteDelayedJobs).toHaveBeenCalled();
         expect(consoleSpy).toHaveBeenCalledWith(
-            expect.stringContaining('Error during scheduled tasks'),
-            expect.any(Error)
+            expect.stringContaining("Error during scheduled tasks"),
+            expect.any(Error),
         );
 
         consoleSpy.mockRestore();
         await queue.close();
     });
 
-    it('should ignore startScheduler if already running', () => {
-        const queue = new Queue('test-queue', mockKodiak);
+    it("should ignore startScheduler if already running", () => {
+        const queue = new Queue("test-queue", mockKodiak);
 
-        const intervalBefore = (queue as unknown as { schedulerInterval: NodeJS.Timeout | null }).schedulerInterval;
+        const intervalBefore = (queue as unknown as { schedulerInterval: NodeJS.Timeout | null })
+            .schedulerInterval;
 
         (queue as unknown as { startScheduler: () => void }).startScheduler();
 
-        const intervalAfter = (queue as unknown as { schedulerInterval: NodeJS.Timeout | null }).schedulerInterval;
+        const intervalAfter = (queue as unknown as { schedulerInterval: NodeJS.Timeout | null })
+            .schedulerInterval;
 
         expect(intervalBefore).toBe(intervalAfter);
-        
+
         queue.close();
     });
 
-    it('should call AddJobUseCase when adding a job', async () => {
-        const queue = new Queue('test-queue', mockKodiak);
-        const data = { foo: 'bar' };
+    it("should call AddJobUseCase when adding a job", async () => {
+        const queue = new Queue("test-queue", mockKodiak);
+        const data = { foo: "bar" };
 
-        await queue.add('job-1', data);
+        await queue.add("job-1", data);
 
-        expect(mockExecute).toHaveBeenCalledWith('job-1', data, undefined);
+        expect(mockExecute).toHaveBeenCalledWith("job-1", data, undefined);
 
         await queue.close();
     });
 
-    it('should handle close when schedulerInterval is null', async () => {
-        const queue = new Queue('test-queue', mockKodiak);
+    it("should handle close when schedulerInterval is null", async () => {
+        const queue = new Queue("test-queue", mockKodiak);
 
         await queue.close();
 
         await expect(queue.close()).resolves.not.toThrow();
     });
 
-    it('should call AddJobUseCase with options when provided', async () => {
-        const queue = new Queue('test-queue', mockKodiak);
-        const data = { foo: 'bar' };
+    it("should call AddJobUseCase with options when provided", async () => {
+        const queue = new Queue("test-queue", mockKodiak);
+        const data = { foo: "bar" };
         const options = { priority: 5, attempts: 3 };
 
-        await queue.add('job-2', data, options);
+        await queue.add("job-2", data, options);
 
-        expect(mockExecute).toHaveBeenCalledWith('job-2', data, options);
+        expect(mockExecute).toHaveBeenCalledWith("job-2", data, options);
 
         await queue.close();
     });
 
-    it('should log info when stalled jobs recovered', async () => {
-        mockRecoverStalledJobs.mockResolvedValueOnce(['job-1'] as never);
-        const infoSpy = jest.spyOn(console, 'info').mockImplementation(() => {});
+    it("should log info when stalled jobs recovered", async () => {
+        mockRecoverStalledJobs.mockResolvedValueOnce(["job-1"] as never);
+        const infoSpy = jest.spyOn(console, "info").mockImplementation(() => {});
 
         let scheduledCb: (() => Promise<void>) | null = null;
 
-        const setIntervalSpy = jest.spyOn(global, 'setInterval').mockImplementation((cb: TimerHandler): NodeJS.Timeout => {
-            scheduledCb = cb as () => Promise<void>;
-            return 1 as unknown as NodeJS.Timeout;
-        });
+        const setIntervalSpy = jest
+            .spyOn(global, "setInterval")
+            .mockImplementation((cb: TimerHandler): NodeJS.Timeout => {
+                scheduledCb = cb as () => Promise<void>;
+                return 1 as unknown as NodeJS.Timeout;
+            });
 
-        const queue = new Queue('test-queue', mockKodiak);
+        const queue = new Queue("test-queue", mockKodiak);
 
-        if (typeof scheduledCb === 'function') {
+        if (typeof scheduledCb === "function") {
             await (scheduledCb as () => Promise<void>)();
         }
 
-        expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('[Queue:test-queue] Recovered 1 stalled job(s): job-1'));
+        expect(infoSpy).toHaveBeenCalledWith(
+            expect.stringContaining("[Queue:test-queue] Recovered 1 stalled job(s): job-1"),
+        );
 
         setIntervalSpy.mockRestore();
         infoSpy.mockRestore();
@@ -160,27 +166,29 @@ describe('Unit: Queue', () => {
         await queue.close();
     });
 
-    it('should handle errors in Error during recoverStalledJobs for queue', async () => {
-        const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-        
-        mockRecoverStalledJobs.mockRejectedValueOnce(new Error('Redis error') as never);
-        
+    it("should handle errors in Error during recoverStalledJobs for queue", async () => {
+        const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+        mockRecoverStalledJobs.mockRejectedValueOnce(new Error("Redis error") as never);
+
         let scheduledCb: (() => Promise<void>) | null = null;
-        
-        const setIntervalSpy = jest.spyOn(global, 'setInterval').mockImplementation((cb: TimerHandler): NodeJS.Timeout => {
-            scheduledCb = cb as () => Promise<void>;
-            return 1 as unknown as NodeJS.Timeout;
-        });
 
-        const queue = new Queue('test-queue', mockKodiak);
+        const setIntervalSpy = jest
+            .spyOn(global, "setInterval")
+            .mockImplementation((cb: TimerHandler): NodeJS.Timeout => {
+                scheduledCb = cb as () => Promise<void>;
+                return 1 as unknown as NodeJS.Timeout;
+            });
 
-        if (typeof scheduledCb === 'function') {
+        const queue = new Queue("test-queue", mockKodiak);
+
+        if (typeof scheduledCb === "function") {
             await (scheduledCb as () => Promise<void>)();
         }
 
         expect(consoleSpy).toHaveBeenCalledWith(
-            expect.stringContaining('Error during recoverStalledJobs for queue'),
-            expect.any(Error)
+            expect.stringContaining("Error during recoverStalledJobs for queue"),
+            expect.any(Error),
         );
 
         setIntervalSpy.mockRestore();

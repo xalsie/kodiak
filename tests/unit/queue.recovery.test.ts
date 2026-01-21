@@ -1,33 +1,34 @@
-import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let mockKodiak: any;
 
 const mockPromoteDelayedJobs = jest.fn().mockResolvedValue(0 as never);
 const mockRecoverStalledJobs = jest.fn().mockResolvedValue([] as never);
 
-jest.unstable_mockModule('../../src/infrastructure/redis/redis-queue.repository.js', () => ({
+jest.unstable_mockModule("../../src/infrastructure/redis/redis-queue.repository.js", () => ({
     RedisQueueRepository: jest.fn().mockImplementation(() => ({
         promoteDelayedJobs: mockPromoteDelayedJobs,
         recoverStalledJobs: mockRecoverStalledJobs,
         add: jest.fn(),
-    }))
+    })),
 }));
 
-const { Queue } = await import('../../src/presentation/queue.js');
-import { Kodiak } from '../../src/presentation/kodiak.js';
+const { Queue } = await import("../../src/presentation/queue.js");
+import { Kodiak } from "../../src/presentation/kodiak.js";
 
-describe('Unit: Queue stalled recovery scheduler', () => {
+describe("Unit: Queue stalled recovery scheduler", () => {
     beforeEach(() => {
         jest.useFakeTimers();
 
         const mockConnection = {
             duplicate: jest.fn(() => mockConnection),
-            quit: jest.fn().mockResolvedValue('OK' as never),
+            quit: jest.fn().mockResolvedValue("OK" as never),
         };
 
         mockKodiak = {
             connection: mockConnection,
-            prefix: 'test'
+            prefix: "test",
         } as unknown as Kodiak;
 
         mockPromoteDelayedJobs.mockClear();
@@ -38,8 +39,8 @@ describe('Unit: Queue stalled recovery scheduler', () => {
         jest.useRealTimers();
     });
 
-    it('should call recoverStalledJobs periodically', async () => {
-        const queue = new Queue('test-queue', mockKodiak);
+    it("should call recoverStalledJobs periodically", async () => {
+        const queue = new Queue("test-queue", mockKodiak);
 
         jest.advanceTimersByTime(5000);
         await Promise.resolve();

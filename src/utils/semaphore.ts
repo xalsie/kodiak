@@ -1,6 +1,6 @@
 export class Semaphore {
     private permits: number;
-    private waiters: Array<(value: void) => void> = [];
+    private waiters: Array<() => void> = [];
 
     constructor(initialPermits: number) {
         this.permits = initialPermits;

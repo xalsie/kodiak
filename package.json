@@ -34,7 +34,8 @@
         "coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
         "example": "tsc --esModuleInterop --allowSyntheticDefaultImports --module node20 --lib es2024 --moduleResolution node16 examples/simple.ts && node examples/simple.js",
         "lint": "eslint . --ext .ts",
-        "format": "prettier --write ."
+        "lint:fix": "eslint . --ext .ts --fix",
+        "lint:format": "prettier --write ."
     },
     "dependencies": {
         "ioredis": "^5.9.2"
@@ -44,8 +45,8 @@
         "@semantic-release/git": "^10.0.1",
         "@types/jest": "^30.0.0",
         "@types/node": "^25.0.9",
-        "@typescript-eslint/eslint-plugin": "^8.53.0",
-        "@typescript-eslint/parser": "^8.53.0",
+        "@typescript-eslint/eslint-plugin": "^8.53.1",
+        "@typescript-eslint/parser": "^8.53.1",
         "eslint": "^9.39.2",
         "eslint-config-prettier": "^10.1.8",
         "eslint-plugin-prettier": "^5.5.5",
@@ -54,6 +55,6 @@
         "semantic-release": "^25.0.2",
         "ts-jest": "^29.4.6",
         "typescript": "^5.9.3",
-        "typescript-eslint": "^8.53.0"
+        "typescript-eslint": "^8.53.1"
     }
 }

@@ -1,6 +1,6 @@
-import type { Job } from '../../domain/entities/job.entity.js';
-import type { IQueueRepository } from '../../domain/repositories/queue.repository.js';
-import type { JobOptions } from '../dtos/job-options.dto.js';
+import type { Job } from "../../domain/entities/job.entity.js";
+import type { IQueueRepository } from "../../domain/repositories/queue.repository.js";
+import type { JobOptions } from "../dtos/job-options.dto.js";
 
 export class AddJobUseCase<T> {
     constructor(private readonly queueRepository: IQueueRepository<T>) {}
@@ -13,7 +13,7 @@ export class AddJobUseCase<T> {
         const job: Job<T> = {
             id,
             data,
-            status: delay > 0 ? 'delayed' : 'waiting',
+            status: delay > 0 ? "delayed" : "waiting",
             priority,
             addedAt: new Date(),
             retryCount: 0,
@@ -22,7 +22,7 @@ export class AddJobUseCase<T> {
             progress: 0,
             updateProgress: async () => {
                 return Promise.resolve();
-            }
+            },
         };
 
         const now = Date.now();

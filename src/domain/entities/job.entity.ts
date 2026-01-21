@@ -1,6 +1,6 @@
-export type JobStatus = 'waiting' | 'active' | 'completed' | 'failed' | 'delayed';
+export type JobStatus = "waiting" | "active" | "completed" | "failed" | "delayed";
 
-export type BackoffStrategy = 'fixed' | 'exponential' | string;
+export type BackoffStrategy = "fixed" | "exponential" | string;
 
 export interface Job<T> {
     id: string;

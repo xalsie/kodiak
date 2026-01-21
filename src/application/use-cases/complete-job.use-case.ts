@@ -1,4 +1,4 @@
-import type { IQueueRepository } from '../../domain/repositories/queue.repository.js';
+import type { IQueueRepository } from "../../domain/repositories/queue.repository.js";
 
 export class CompleteJobUseCase<T> {
     constructor(private readonly queueRepository: IQueueRepository<T>) {}
