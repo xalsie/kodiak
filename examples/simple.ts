@@ -1,5 +1,5 @@
-import { Kodiak } from "../src/presentation/kodiak.js";
-import type { Job } from "../src/domain/entities/job.entity.js";
+import { Kodiak } from "../dist/presentation/kodiak.js";
+import type { Job } from "../dist/domain/entities/job.entity.js";
 
 // 1. Initialiser Kodiak
 const kodiak = new Kodiak({
@@ -28,12 +28,18 @@ const worker = kodiak.createWorker<EmailPayload>(
         await new Promise((resolve) => setTimeout(resolve, 500));
         await job.updateProgress(50);
 
+        // Simuler une erreur pour démonstration
+        if (job.id === "welcome-2") throw new Error("Simulated email sending failure");
+
         await new Promise((resolve) => setTimeout(resolve, 500));
         await job.updateProgress(100);
 
         console.log(`✅ Email envoyé : "${job.data.subject}"`);
     },
-    { concurrency: 1 },
+    {
+        concurrency: 1,
+        prefetch: 2
+    },
 );
 
 // Écouter les événements
@@ -54,6 +60,11 @@ await worker.start();
 // 6. Ajouter un job à la file
 console.log("➕ Ajout du job...");
 await emailQueue.add("welcome-1", {
+    to: "user@example.com",
+    body: "Bienvenue sur Kodiak, votre nouvelle solution de gestion de files d'attente !",
+    subject: "Bienvenue sur Kodiak !",
+});
+await emailQueue.add("welcome-2", {
     to: "user@example.com",
     body: "Bienvenue sur Kodiak, votre nouvelle solution de gestion de files d'attente !",
     subject: "Bienvenue sur Kodiak !",
