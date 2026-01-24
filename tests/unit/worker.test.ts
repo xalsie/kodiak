@@ -312,10 +312,11 @@ describe("Worker", () => {
 
     it("should handle graceful shutdown timeout", async () => {
         jest.useFakeTimers();
-        const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+        const errorEmitter = jest.fn();
         const worker = new Worker("test-queue", processor, mockKodiak, {
             gracefulShutdownTimeout: 10,
         });
+        worker.on("error", errorEmitter);
 
         const mockJob = createMockJob();
         mockFetchExecute.mockResolvedValueOnce([mockJob] as never);
@@ -328,16 +329,10 @@ describe("Worker", () => {
         await jest.advanceTimersByTimeAsync(50);
         await worker.stop();
 
-        expect(consoleSpy).toHaveBeenCalledWith(
-            "[Worker] Graceful shutdown failed:",
-            expect.any(Error),
-        );
-
-        consoleSpy.mockRestore();
+        expect(errorEmitter).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining("Graceful shutdown") }));
     });
 
     it("should handle errors during Redis connection disconnect", async () => {
-        const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
         const disconnectError = new Error("Disconnect failed");
 
         const mockRedisConnection = {
@@ -350,20 +345,14 @@ describe("Worker", () => {
         (mockKodiak as any).connection = mockRedisConnection as unknown as Redis;
 
         const worker = new Worker("test-queue", processor, mockKodiak);
+        const errorEmitter = jest.fn();
+        worker.on("error", errorEmitter);
 
         await worker.start();
         await worker.stop();
 
-        expect(consoleSpy).toHaveBeenCalledWith(
-            "Error during blocking connection disconnect:",
-            disconnectError,
-        );
-        expect(consoleSpy).toHaveBeenCalledWith(
-            "Error during ack connection disconnect:",
-            disconnectError,
-        );
-
-        consoleSpy.mockRestore();
+        expect(errorEmitter).toHaveBeenCalledTimes(2);
+        expect(errorEmitter).toHaveBeenCalledWith(disconnectError);
     });
 
     it("should emit error if getJob fails", async () => {
@@ -393,15 +382,15 @@ describe("Worker", () => {
         };
 
         // @ts-expect-error - Accès privé pour le test
-        worker.jobBuffer = [job1];
+        worker.jobBuffers.set(0, [job1]);
 
         await bufferLock.acquire();
 
         // @ts-expect-error - Accès privé pour le test
-        const getJobPromise = worker.getJob();
+        const getJobPromise = worker.getJob(0, "owner-token");
 
         // @ts-expect-error - Accès privé pour le test
-        worker.jobBuffer.push(job2);
+        worker.jobBuffers.get(0)?.push(job2);
         bufferLock.release();
 
         const result = await getJobPromise;
@@ -416,15 +405,14 @@ describe("Worker", () => {
         const jobInBuffer = createMockJob({ id: "buffered-job" });
 
         // @ts-expect-error - Accès privé pour le test
-        worker.jobBuffer = [jobInBuffer];
+        worker.jobBuffers.set(0, [jobInBuffer]);
 
-        const getJobResult = await (worker as any).getJob();
+        const getJobResult = await (worker as any).getJob(0, "owner-token");
         expect(getJobResult?.id).toBe("buffered-job");
         await worker.stop();
     });
 
     it("should handle error during ack connection disconnect", async () => {
-        const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
         const disconnectError = new Error("ACK Disconnect failed");
 
         const mockAckConnection = {
@@ -438,27 +426,21 @@ describe("Worker", () => {
             .mockReturnValueOnce(mockBlockingConnection);
 
         const worker = new Worker("test-queue", processor, mockKodiak);
+        const errorEmitter = jest.fn();
+        worker.on("error", errorEmitter);
         await worker.stop();
 
-        expect(consoleSpy).toHaveBeenCalledWith(
-            "Error during ack connection disconnect:",
-            disconnectError,
-        );
-        expect(consoleSpy).not.toHaveBeenCalledWith(
-            "Error during blocking connection disconnect:",
-            expect.any(Error),
-        );
-
-        consoleSpy.mockRestore();
+        expect(errorEmitter).toHaveBeenCalledWith(disconnectError);
+        expect(errorEmitter).toHaveBeenCalledTimes(1);
     });
 
     it("should return null if job from buffer is falsy", async () => {
         const worker = new Worker("test-queue", processor, mockKodiak);
 
         // @ts-expect-error - Pushing undefined to test falsy path
-        worker.jobBuffer = [undefined];
+        worker.jobBuffers.set(0, [undefined]);
 
-        const job = await (worker as any).getJob();
+        const job = await (worker as any).getJob(0, "owner-token");
         expect(job).toBeNull();
 
         await worker.stop();

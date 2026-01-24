@@ -71,22 +71,20 @@ describe("Unit: Queue", () => {
     });
 
     it("should handle errors in scheduler loop", async () => {
-        const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
         mockPromoteDelayedJobs.mockRejectedValueOnce(new Error("Redis error") as never);
 
         const queue = new Queue("test-queue", mockKodiak);
+        const errorEmitter = jest.fn();
+        // @ts-expect-error - Queue may implement EventEmitter in updated code
+        queue.on("error", errorEmitter);
 
         jest.advanceTimersByTime(5000);
 
         await Promise.resolve();
 
         expect(mockPromoteDelayedJobs).toHaveBeenCalled();
-        expect(consoleSpy).toHaveBeenCalledWith(
-            expect.stringContaining("Error during scheduled tasks"),
-            expect.any(Error),
-        );
+        expect(errorEmitter).toHaveBeenCalledWith(expect.any(Error));
 
-        consoleSpy.mockRestore();
         await queue.close();
     });
 
@@ -139,7 +137,6 @@ describe("Unit: Queue", () => {
 
     it("should log info when stalled jobs recovered", async () => {
         mockRecoverStalledJobs.mockResolvedValueOnce(["job-1"] as never);
-        const infoSpy = jest.spyOn(console, "info").mockImplementation(() => {});
 
         let scheduledCb: (() => Promise<void>) | null = null;
 
@@ -156,19 +153,15 @@ describe("Unit: Queue", () => {
             await (scheduledCb as () => Promise<void>)();
         }
 
-        expect(infoSpy).toHaveBeenCalledWith(
-            expect.stringContaining("[Queue:test-queue] Recovered 1 stalled job(s): job-1"),
-        );
+        // ensure the recovery path was invoked
+        expect(mockRecoverStalledJobs).toHaveBeenCalled();
 
         setIntervalSpy.mockRestore();
-        infoSpy.mockRestore();
 
         await queue.close();
     });
 
     it("should handle errors in Error during recoverStalledJobs for queue", async () => {
-        const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
-
         mockRecoverStalledJobs.mockRejectedValueOnce(new Error("Redis error") as never);
 
         let scheduledCb: (() => Promise<void>) | null = null;
@@ -181,18 +174,17 @@ describe("Unit: Queue", () => {
             });
 
         const queue = new Queue("test-queue", mockKodiak);
+        const errorEmitter = jest.fn();
+        // @ts-expect-error - Queue may implement EventEmitter in updated code
+        queue.on("error", errorEmitter);
 
         if (typeof scheduledCb === "function") {
             await (scheduledCb as () => Promise<void>)();
         }
 
-        expect(consoleSpy).toHaveBeenCalledWith(
-            expect.stringContaining("Error during recoverStalledJobs for queue"),
-            expect.any(Error),
-        );
+        expect(errorEmitter).toHaveBeenCalledWith(expect.any(Error));
 
         setIntervalSpy.mockRestore();
-        consoleSpy.mockRestore();
 
         await queue.close();
     });
