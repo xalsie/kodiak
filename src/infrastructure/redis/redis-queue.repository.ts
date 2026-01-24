@@ -22,6 +22,7 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
     private updateProgressScript: string;
     private moveToActiveScript: string;
     private recoverStalledJobsScript: string;
+    private extendLockScript: string;
 
     constructor(
         private readonly queueName: string,
@@ -56,6 +57,10 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
         );
         this.recoverStalledJobsScript = fs.readFileSync(
             path.join(__dirname, "lua", "detect_and_recover_stalled_jobs.lua"),
+            "utf8",
+        );
+        this.extendLockScript = fs.readFileSync(
+            path.join(__dirname, "lua", "extend_lock.lua"),
             "utf8",
         );
     }
@@ -168,7 +173,7 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
         return null;
     }
 
-    async fetchNextJobs(count: number, lockDuration: number): Promise<Job<T>[]> {
+    async fetchNextJobs(count: number, lockDuration: number, ownerToken?: string): Promise<Job<T>[]> {
         const now = Date.now();
         const lockExpiresAt = now + lockDuration;
 
@@ -188,8 +193,12 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
         const pipeline = this.connection.pipeline();
         for (const jobId of jobIds) {
             const jobKey = `${this.jobKeyPrefix}${jobId}`;
-            pipeline.hset(jobKey, "state", "active", "started_at", now);
-            pipeline.hgetall(jobKey);
+                if (ownerToken) {
+                    pipeline.hset(jobKey, "state", "active", "started_at", now, "lock_owner", ownerToken);
+                } else {
+                    pipeline.hset(jobKey, "state", "active", "started_at", now);
+                }
+                pipeline.hgetall(jobKey);
         }
         const results = await pipeline.exec();
 
@@ -329,5 +338,20 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
     async updateProgress(jobId: string, progress: number): Promise<void> {
         const jobKey = `${this.jobKeyPrefix}${jobId}`;
         await this.connection.eval(this.updateProgressScript, 1, jobKey, String(progress));
+    }
+
+    async extendLock(jobId: string, lockExpiresAt: number, ownerToken?: string): Promise<boolean> {
+        const jobKey = `${this.jobKeyPrefix}${jobId}`;
+        const result = await this.connection.eval(
+            this.extendLockScript,
+            2,
+            this.activeQueueKey,
+            jobKey,
+            jobId,
+            String(lockExpiresAt),
+            ownerToken ?? "",
+        );
+
+        return Number(result) === 1;
     }
 }
