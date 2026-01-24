@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { randomUUID } from "node:crypto";
 import { setTimeout } from "node:timers/promises";
 import { Redis } from "ioredis";
 import { Kodiak } from "./kodiak.js";
@@ -7,9 +8,9 @@ import { FailJobUseCase } from "../application/use-cases/fail-job.use-case.js";
 import { UpdateJobProgressUseCase } from "../application/use-cases/update-job-progress.use-case.js";
 import { RedisQueueRepository } from "../infrastructure/redis/redis-queue.repository.js";
 import { Semaphore } from "../utils/semaphore.js";
+import { FetchJobsUseCase } from "../application/use-cases/fetch-jobs.use-case.js";
 import type { WorkerOptions } from "../application/dtos/worker-options.dto.js";
 import type { Job } from "../domain/entities/job.entity.js";
-import { FetchJobsUseCase } from "../application/use-cases/fetch-jobs.use-case.js";
 
 export class Worker<T> extends EventEmitter {
     private readonly fetchJobsUseCase: FetchJobsUseCase<T>;
@@ -21,9 +22,11 @@ export class Worker<T> extends EventEmitter {
     private blockingConnection: Redis;
     private ackConnection: Redis;
     private processingSemaphore: Semaphore;
-    private jobBuffer: Job<T>[] = [];
+    private jobBuffers: Map<number, Job<T>[]> = new Map();
     private readonly bufferLock: Semaphore = new Semaphore(1);
     private processingPromises: Promise<void>[] = [];
+    private ackQueueRepository: RedisQueueRepository<T>;
+    private workerId: string;
 
     constructor(
         public readonly name: string,
@@ -47,6 +50,11 @@ export class Worker<T> extends EventEmitter {
             kodiak.prefix,
         );
 
+        this.ackQueueRepository = ackQueueRepository;
+
+        // Unique worker id used as lock owner token
+        this.workerId = `${process.pid}-${randomUUID()}`;
+
         this.fetchJobsUseCase = new FetchJobsUseCase<T>(blockingQueueRepository);
         this.completeJobUseCase = new CompleteJobUseCase<T>(ackQueueRepository);
         this.failJobUseCase = new FailJobUseCase<T>(ackQueueRepository, opts?.backoffStrategies);
@@ -66,7 +74,8 @@ export class Worker<T> extends EventEmitter {
         const concurrency = this.opts?.concurrency ?? 1;
 
         for (let i = 0; i < concurrency; i++) {
-            this.processingPromises.push(this.processNext());
+            this.jobBuffers.set(i, []);
+            this.processingPromises.push(this.processNext(i));
         }
     }
 
@@ -75,8 +84,8 @@ export class Worker<T> extends EventEmitter {
 
         try {
             this.blockingConnection.disconnect();
-        } catch (e) {
-            console.error("Error during blocking connection disconnect:", e);
+        } catch (error) {
+            this.emit("error", error);
         }
 
         const shutdownTimeout = this.opts?.gracefulShutdownTimeout ?? 30000;
@@ -90,45 +99,51 @@ export class Worker<T> extends EventEmitter {
         try {
             await Promise.race([Promise.all(this.processingPromises), timeoutPromise]);
         } catch (error) {
-            console.error("[Worker] Graceful shutdown failed:", error);
+            this.emit("error", error);
         }
 
         try {
             this.ackConnection.disconnect();
-        } catch (e) {
-            console.error("Error during ack connection disconnect:", e);
+        } catch (error) {
+            this.emit("error", error);
         }
 
         this.emit("stop");
     }
 
-    private async getJob(): Promise<Job<T> | null> {
-        if (this.jobBuffer.length > 0) {
-            const job = this.jobBuffer.shift();
-            return job ? job : null;
+    private async getJob(slotIndex: number, ownerToken: string): Promise<Job<T> | null> {
+        const buffer = this.jobBuffers.get(slotIndex) ?? [];
+        if (buffer.length > 0) {
+            const job = buffer.shift();
+            this.jobBuffers.set(slotIndex, buffer);
+            return job ?? null;
         }
 
         await this.bufferLock.acquire();
         try {
             const prefetch = this.opts?.prefetch ?? 10;
-            const lockDuration = this.opts?.lockDuration ?? 30000;
-            const jobs = await this.fetchJobsUseCase.execute(prefetch, lockDuration);
+            const lockDuration = this.opts?.lockDuration ?? 30_000;
+            const jobs = await this.fetchJobsUseCase.execute(prefetch, lockDuration, ownerToken);
 
             if (jobs && jobs.length > 0) {
-                this.jobBuffer.push(...jobs);
-                this.jobBuffer.shift();
+                // assign fetched jobs to this slot buffer
+                const remaining = jobs.slice();
+                const job = remaining.shift() as Job<T>;
+                this.jobBuffers.set(slotIndex, remaining);
+                return job ?? null;
             }
 
-            return jobs.length > 0 ? jobs[0] : null;
+            return null;
         } finally {
             this.bufferLock.release();
         }
     }
 
-    private async processNext(): Promise<void> {
+    private async processNext(slotIndex: number): Promise<void> {
+        const ownerToken = `${this.workerId}:${slotIndex}`;
         while (this.isRunning) {
             try {
-                const job = await this.getJob();
+                const job = await this.getJob(slotIndex, ownerToken);
 
                 if (job) {
                     this.activeJobs++;
@@ -140,8 +155,28 @@ export class Worker<T> extends EventEmitter {
                     };
                     job.updateProgress = updateProgress;
 
+                    let heartbeatTimer: NodeJS.Timeout | null = null;
                     try {
                         await this.processingSemaphore.acquire();
+
+                        const lockDuration = this.opts?.lockDuration ?? 30_000;
+                        const heartbeatEnabled = this.opts?.heartbeatEnabled ?? false;
+                        if (heartbeatEnabled) {
+                            const heartbeatInterval =
+                                this.opts?.heartbeatInterval ?? Math.max(1000, Math.floor(lockDuration / 2));
+                            heartbeatTimer = setInterval(async () => {
+                                try {
+                                    await this.ackQueueRepository.extendLock(
+                                        job.id,
+                                        Date.now() + lockDuration,
+                                        ownerToken,
+                                    );
+                                } catch (error) {
+                                    this.emit("error", error);
+                                }
+                            }, heartbeatInterval);
+                        }
+
                         await this.processor(job);
 
                         await this.completeJobUseCase.execute(job.id);
@@ -156,6 +191,7 @@ export class Worker<T> extends EventEmitter {
                         job.error = err.message;
                         this.emit("failed", job, err);
                     } finally {
+                        if (heartbeatTimer) clearInterval(heartbeatTimer);
                         this.processingSemaphore.release();
                         this.activeJobs--;
                     }
