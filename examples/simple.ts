@@ -1,5 +1,8 @@
-import { Kodiak } from "../dist/presentation/kodiak.js";
-import type { Job } from "../dist/domain/entities/job.entity.js";
+/* eslint-disable no-console */
+// DEV ONLY
+
+import { Kodiak } from "../src/presentation/kodiak.js";
+import type { Job } from "../src/domain/entities/job.entity.js";
 
 // 1. Initialiser Kodiak
 const kodiak = new Kodiak({
