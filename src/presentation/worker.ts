@@ -43,11 +43,13 @@ export class Worker<T> extends EventEmitter {
             name,
             this.ackConnection,
             kodiak.prefix,
+            opts?.rateLimiter,
         );
         const blockingQueueRepository = new RedisQueueRepository<T>(
             name,
             this.blockingConnection,
             kodiak.prefix,
+            opts?.rateLimiter,
         );
 
         this.ackQueueRepository = ackQueueRepository;
@@ -121,12 +123,18 @@ export class Worker<T> extends EventEmitter {
 
         await this.bufferLock.acquire();
         try {
-            const prefetch = this.opts?.prefetch ?? 10;
+            const requestedPrefetch = this.opts?.prefetch ?? 10;
             const lockDuration = this.opts?.lockDuration ?? 30_000;
-            const jobs = await this.fetchJobsUseCase.execute(prefetch, lockDuration, ownerToken);
+            const configuredCapacity = this.opts?.rateLimiter?.capacity;
+            let effectivePrefetch = requestedPrefetch;
+            if (typeof configuredCapacity === "number" && configuredCapacity > 0) {
+                effectivePrefetch = Math.max(1, Math.min(requestedPrefetch, configuredCapacity));
+                this.emit("debug", `adjusted prefetch from ${requestedPrefetch} to ${effectivePrefetch} based on rateLimiter capacity ${configuredCapacity}`);
+            }
+
+            const jobs = await this.fetchJobsUseCase.execute(effectivePrefetch, lockDuration, ownerToken);
 
             if (jobs && jobs.length > 0) {
-                // assign fetched jobs to this slot buffer
                 const remaining = jobs.slice();
                 const job = remaining.shift() as Job<T>;
                 this.jobBuffers.set(slotIndex, remaining);

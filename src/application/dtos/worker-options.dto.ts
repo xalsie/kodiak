@@ -1,4 +1,5 @@
 import { BackoffStrategy } from "../../domain/strategies/backoff.strategy.js";
+import type { RateLimiterOptions } from "./rate-limiter-options.dto.js";
 
 /**
  * Configuration options for worker behavior.
@@ -7,18 +8,18 @@ import { BackoffStrategy } from "../../domain/strategies/backoff.strategy.js";
 export interface WorkerOptions {
    /**
     * Maximum number of concurrent workers processing tasks.
-    * 
+    *
     * Optional. Default: 1
-    * 
+    *
     * Example: 5
     */
    concurrency?: number;
 
    /**
     * Number of messages to prefetch per worker.
-    * 
+    *
     * Optional. Default: 100
-    * 
+    *
     * Examples:
     * - 50 (small workers)
     * - 500 (high-throughput worker with lots of memory)
@@ -32,9 +33,9 @@ export interface WorkerOptions {
 
    /**
     * Lock duration in milliseconds for a claimed task.
-    * 
+    *
     * Optional. Default: 30000 (30 seconds)
-    * 
+    *
     * Examples:
     * - 30000 (default, reasonable for short tasks)
     * - 60000 (longer tasks)
@@ -49,9 +50,9 @@ export interface WorkerOptions {
 
    /**
     * Time in milliseconds to wait for in-flight tasks to finish during shutdown.
-    * 
+    *
     * Optional. Default: 30000 (30 seconds)
-    * 
+    *
     * Examples:
     * - 15000 (short grace period)
     * - 30000 (default)
@@ -66,9 +67,9 @@ export interface WorkerOptions {
 
    /**
     * Map of named backoff strategies used for retrying tasks.
-    * 
+    *
     * Optional. Default: {}
-    * 
+    *
     * ```json
     * Example: {
     *  "exponential": myExponentialBackoff
@@ -92,9 +93,9 @@ export interface WorkerOptions {
 
    /**
     * Enable or disable heartbeat mechanism that periodically extends locks.
-    * 
+    *
     * Optional. Default: false
-    * 
+    *
     * Examples:
     * - `false` (keep current stalled-detection only)
     * - `true` (enable heartbeat; worker will periodically refresh locks)
@@ -108,9 +109,9 @@ export interface WorkerOptions {
 
    /**
     * Interval in milliseconds between heartbeats.
-    * 
+    *
     * Optional. Default: Math.max(1000, lockDuration/2)
-    * 
+    *
     * Examples:
     * - 1000 (very frequent, higher Redis load)
     * - 5000 (balanced)
@@ -122,4 +123,20 @@ export interface WorkerOptions {
     * ```
     */
    heartbeatInterval?: number;
+
+   /**
+    * Optional rate limiter configuration applied to repository operations (per-queue).
+    *
+   rateLimiter?: RateLimiterOptions;
+    *
+    * Examples:
+    * - { max: 100, duration: 60000 } (limit to 100 operations per minute)
+    * - { max: 10, duration: 1000 } (limit to 10 operations per second)
+    *
+    * Usage:
+    * ```ts
+    * const opts: WorkerOptions = { rateLimiter: { max: 100, duration: 60000 } };
+    * ```
+    */
+   rateLimiter?: RateLimiterOptions;
 }

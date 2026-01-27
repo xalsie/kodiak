@@ -4,6 +4,7 @@ import { Queue } from "./queue.js";
 import { Worker } from "./worker.js";
 import type { WorkerOptions } from "../application/dtos/worker-options.dto.js";
 import type { Job } from "../domain/entities/job.entity.js";
+import type { QueueOptions } from "../application/dtos/queue-options.dto.js";
 
 export interface KodiakOptions {
     connection: RedisOptions;
@@ -20,8 +21,8 @@ export class Kodiak {
         this.prefix = this.options.prefix ?? "kodiak";
     }
 
-    public createQueue<T>(name: string): Queue<T> {
-        return new Queue<T>(name, this);
+    public createQueue<T>(name: string, opts?: QueueOptions): Queue<T> {
+        return new Queue<T>(name, this, opts);
     }
 
     public createWorker<T>(

@@ -7,9 +7,11 @@
 -- ARGV[2]: Error Message
 -- ARGV[3]: Failed At Timestamp (Current Time)
 
+
 local activeQueue = KEYS[1]
 local jobKey = KEYS[2]
 local delayedQueue = KEYS[3]
+-- optional: KEYS[4] = delayed timer key prefix
 
 local jobId = ARGV[1]
 local errorMsg = ARGV[2]
@@ -52,13 +54,17 @@ if retryCount < (maxAttempts - 1) then
 
     -- Update job state
     redis.call('HSET', jobKey, 'state', 'delayed', 'retry_count', newRetryCount, 'error', errorMsg, 'failed_at', failedAt)
-    
+
     -- Add to delayed queue
     redis.call('ZADD', delayedQueue, nextAttempt, jobId)
-    
-    return 0 -- Indicates job was retried
+
+    -- Return the scheduled nextAttempt so caller can create timer key outside the script
+    return tostring(nextAttempt)
 else
     -- FAIL THE JOB PERMANENTLY
-    redis.call('HSET', jobKey, 'state', 'failed', 'failed_at', failedAt, 'error', errorMsg)
-    return 1 -- Indicates job failed permanently
+    -- Increment retry_count to reflect this final attempt so the counter
+    -- represents total attempts performed (optional behavior).
+    local finalRetryCount = retryCount + 1
+    redis.call('HSET', jobKey, 'state', 'failed', 'failed_at', failedAt, 'error', errorMsg, 'retry_count', finalRetryCount)
+    return tostring(-1)
 end

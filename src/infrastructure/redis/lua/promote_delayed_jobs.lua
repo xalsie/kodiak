@@ -17,26 +17,31 @@ local limit = tonumber(ARGV[2])
 -- Get jobs ready to be processed
 local jobs = redis.call('ZRANGEBYSCORE', delayedQueue, '-inf', now, 'LIMIT', 0, limit)
 
+local moved = {}
+
 if #jobs > 0 then
     for _, jobId in ipairs(jobs) do
-        local jobKey = jobKeyPrefix .. jobId
-        
-        -- Get job priority to set the correct score in waiting queue
-        -- Assuming priority is stored in the job hash. If not, we might need a default.
-        local priority = tonumber(redis.call('HGET', jobKey, 'priority')) or 0
-        
+        -- We avoid reading or writing the job hash inside this script because
+        -- Redis scripts are only allowed to access keys provided in KEYS.
+        -- To remain compatible with strict Redis key tracking, we will only
+        -- move the ids between sorted sets and notify workers. The caller
+        -- will update job hashes (state/updated_at) after the script returns.
+
+        -- Default priority (no per-job hash access here)
+        local priority = 0
+
         -- Move to waiting queue with priority as score
         redis.call('ZADD', waitingQueue, priority, jobId)
-        
-        -- Update state
-        redis.call('HSET', jobKey, 'state', 'waiting')
-        
+
         -- Remove from delayed queue
         redis.call('ZREM', delayedQueue, jobId)
-        
+
         -- Notify workers
         redis.call('LPUSH', notificationQueue, '1')
+
+        table.insert(moved, jobId)
     end
 end
 
-return #jobs
+-- Return list of moved job ids so caller can update job hashes atomically afterwards
+return moved

@@ -1,5 +1,19 @@
 /**
- * Backoff configuration for retries.
+ * Options for backoff strategy.
+ *
+ * Examples and usage:
+ *
+ * Fixed backoff:
+ * ```ts
+ * const backoff: BackoffOptions = { type: "fixed", delay: 1000 };
+ * // fixed delay of 1 second between attempts
+ * ```
+ *
+ * Exponential backoff:
+ * ```ts
+ * const backoff: BackoffOptions = { type: "exponential", delay: 500 };
+ * // delays: 500ms, 1000ms, 2000ms, 4000ms, ...
+ * ```
  */
 export interface BackoffOptions {
     /**
@@ -12,6 +26,7 @@ export interface BackoffOptions {
      * - { type: "exponential", delay: 500 }
      */
     type: "fixed" | "exponential";
+
     /**
      * Base delay in milliseconds (used as fixed delay or base for exponential).
      * Examples:
@@ -23,11 +38,22 @@ export interface BackoffOptions {
 
 /**
  * Options for repeating jobs.
+ *
+ * Examples and usage:
+ *
+ * Repeat every minute, up to 5 times:
+ * ```ts
+ * const repeat: RepeatOptions = { every: 60000, limit: 5 };
+ * ```
+ * Repeat every 10 minutes indefinitely:
+ * ```ts
+ * const repeat: RepeatOptions = { every: 600000 };
+ * ```
  */
 export interface RepeatOptions {
     /**
      * Interval in milliseconds between repeats.
-     * 
+     *
      * Examples:
      * - 60000 (repeat every 60 seconds)
      * - 300000 (repeat every 5 minutes)
@@ -35,7 +61,7 @@ export interface RepeatOptions {
     every: number;
     /**
      * Optional limit of repetitions.
-     * 
+     *
      * Examples:
      * - 5 (repeat up to 5 times)
      * - 10 (repeat up to 10 times)
@@ -86,7 +112,7 @@ export interface RepeatOptions {
 export interface JobOptions {
     /**
      * Job priority (higher number = higher priority).
-     * 
+     *
      * Examples:
      * - 0 (low priority)
      * - 1 (normal priority)
@@ -102,7 +128,7 @@ export interface JobOptions {
 
     /**
      * Delay in milliseconds before the job becomes available.
-     * 
+     *
      * Examples:
      * - 0 (no delay)
      * - 5000 (5 seconds delay)
@@ -117,7 +143,7 @@ export interface JobOptions {
 
     /**
      * Exact Date until which the job should wait before being processed.
-     * 
+     *
      * Examples:
      * - new Date(Date.now() + 10000) (wait 10 seconds)
      * - new Date(Date.now() + 60000) (wait 1 minute)
@@ -132,7 +158,7 @@ export interface JobOptions {
 
     /**
      * Number of attempts before giving up.
-     * 
+     *
      * Examples:
      * - 1 (single attempt)
      * - 3 (default retry behavior)
@@ -148,6 +174,12 @@ export interface JobOptions {
     /**
      * Backoff configuration for retries.
      *
+     * examples:
+     * - { type: "fixed", delay: 1000 }
+     * - { type: "exponential", delay: 500 }
+     *
+     * // exponential backoff starting at 500ms - 1000ms - 1500ms ...
+     *
      * Usage:
      * ```ts
      * const opts: JobOptions = {
@@ -160,7 +192,7 @@ export interface JobOptions {
 
     /**
      * Repeat configuration for recurring jobs.
-     * 
+     *
      * Optional.
      *
      * Usage:

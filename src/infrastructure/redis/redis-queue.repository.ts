@@ -1,14 +1,16 @@
+import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Redis } from "ioredis";
 import type { Job, JobStatus } from "../../domain/entities/job.entity.js";
 import type { IQueueRepository } from "../../domain/repositories/queue.repository.js";
+import type { RateLimiterOptions } from "../../application/dtos/rate-limiter-options.dto.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-export class RedisQueueRepository<T> implements IQueueRepository<T> {
+export class RedisQueueRepository<T> extends EventEmitter implements IQueueRepository<T> {
     private readonly notificationQueueKey: string;
     private readonly waitingQueueKey: string;
     private readonly delayedQueueKey: string;
@@ -23,12 +25,29 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
     private moveToActiveScript: string;
     private recoverStalledJobsScript: string;
     private extendLockScript: string;
+    private rateLimiterScript: string;
+    private moveWaitingToDelayedScript: string;
+    // default rate-limiter params (can be made configurable later)
+    // tokens per second
+    private readonly DEFAULT_RATE = 10;
+    // burst capacity (tokens)
+    private readonly DEFAULT_CAPACITY = 20;
+    private readonly DEFAULT_DELAY_ON_LIMIT_MS = 500;
+    private delayedTimers: Map<string, NodeJS.Timeout> = new Map();
+    private rate: number;
+    private capacity: number;
 
     constructor(
         private readonly queueName: string,
         private readonly connection: Redis,
         private readonly prefix: string,
+        rateLimiterOptions?: RateLimiterOptions,
     ) {
+        super();
+
+        this.rate = rateLimiterOptions?.rate ?? this.DEFAULT_RATE;
+        this.capacity = rateLimiterOptions?.capacity ?? this.DEFAULT_CAPACITY;
+
         this.waitingQueueKey = `${this.prefix}:queue:${this.queueName}:waiting`;
         this.delayedQueueKey = `${this.prefix}:queue:${this.queueName}:delayed`;
         this.activeQueueKey = `${this.prefix}:queue:${this.queueName}:active`;
@@ -63,15 +82,99 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
             path.join(__dirname, "lua", "extend_lock.lua"),
             "utf8",
         );
+        this.rateLimiterScript = fs.readFileSync(
+            path.join(__dirname, "lua", "token_bucket.lua"),
+            "utf8",
+        );
+        this.moveWaitingToDelayedScript = fs.readFileSync(
+            path.join(__dirname, "lua", "move_waiting_to_delayed.lua"),
+            "utf8",
+        );
+    }
+
+    private async consumeTokensIfAllowed(requested: number): Promise<boolean> {
+        try {
+            const key = `${this.prefix}:ratelimit:${this.queueName}`;
+            const now = String(Date.now());
+            const res = await this.evalScript(this.rateLimiterScript, [key], [now, String(requested), String(this.rate), String(this.capacity)]);
+            return Number(res) === 1;
+        } catch (e) {
+            // on error, be permissive (avoid blocking processing due to limiter failures)
+            this.emit("debug", "rate limiter script failed, allowing by default", e as Error);
+            return true;
+        }
+    }
+
+    private async moveWaitingToDelayedWithDelay(delayMs: number): Promise<string | null> {
+        try {
+            const now = Date.now();
+            const nextAttempt = now + Math.max(0, delayMs);
+            const res = (await this.evalScript(
+                this.moveWaitingToDelayedScript,
+                [this.waitingQueueKey, this.delayedQueueKey, this.jobKeyPrefix],
+                [String(nextAttempt)],
+            )) as [string, string] | null;
+
+            if (!res) return null;
+
+            const jobId = String(res[0]);
+            const nextAttemptTs = Number(res[1]);
+
+            // Update job hash to reflect delayed state (do on client side to avoid Lua undeclared key errors)
+            try {
+                const jobKey = `${this.jobKeyPrefix}${jobId}`;
+                await this.connection.hset(jobKey, "state", "delayed", "updated_at", String(nextAttemptTs));
+            } catch (e) {
+                this.emit("debug", "failed to update job hash to delayed", e as Error);
+            }
+
+            try {
+                const ttl = nextAttemptTs - Date.now();
+                if (ttl > 0) {
+                    const timerKey = `${this.prefix}:delayed:timer:${jobId}`;
+                    await this.connection.set(timerKey, "1", "PX", ttl);
+                    try {
+                        this.emit("delayedScheduled", jobId, nextAttemptTs);
+                    } catch (e) {
+                        this.emit("debug", "delayedScheduled emit failed", e as Error);
+                    }
+
+                    const existing = this.delayedTimers.get(jobId);
+                    if (existing) clearTimeout(existing);
+                    const t = setTimeout(async () => {
+                        try {
+                            await this.promoteDelayedJobs();
+                        } catch (err) {
+                            this.emit("error", err as Error);
+                        } finally {
+                            this.delayedTimers.delete(jobId);
+                        }
+                    }, ttl);
+                    this.delayedTimers.set(jobId, t);
+                }
+            } catch (e) {
+                this.emit("debug", "failed to set delayed timer key", e as Error);
+            }
+
+            return jobId;
+        } catch (e) {
+            this.emit("debug", "moveWaitingToDelayed script failed", e as Error);
+            return null;
+        }
+    }
+
+    private async evalScript(script: string, keys: string[], args: string[] = []): Promise<unknown> {
+        const conn = this.connection as unknown as { eval?: (...p: unknown[]) => Promise<unknown> };
+        const fn = conn.eval;
+
+        return await fn.call(this.connection, script, keys.length, ...keys, ...args);
     }
 
     async recoverStalledJobs(): Promise<string[]> {
-        const ids = (await this.connection.eval(
+        const ids = (await this.evalScript(
             this.recoverStalledJobsScript,
-            2,
-            this.activeQueueKey,
-            this.waitingQueueKey,
-            String(Date.now()),
+            [this.activeQueueKey, this.waitingQueueKey],
+            [String(Date.now())],
         )) as string[];
 
         if (!ids || ids.length === 0) return [];
@@ -116,32 +219,66 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
             }
         }
 
-        await this.connection.eval(
+        const addResult = await this.evalScript(
             this.addJobScript,
-            4,
-            this.waitingQueueKey,
-            this.delayedQueueKey,
-            jobKey,
-            this.notificationQueueKey,
-            job.id,
-            String(score),
-            isDelayed ? "1" : "0",
-            ...jobFields,
+            [this.waitingQueueKey, this.delayedQueueKey, jobKey, this.notificationQueueKey],
+            [job.id, String(score), isDelayed ? "1" : "0", ...jobFields],
         );
+
+        // If delayed, set a per-job timer key so keyspace expired events can trigger promotion
+        if (isDelayed) {
+            try {
+                const timestampStr = String(addResult ?? "-1");
+                const scheduledTs = Number(timestampStr);
+                const ttl = scheduledTs - Date.now();
+                if (ttl > 0) {
+                    const timerKey = `${this.prefix}:delayed:timer:${job.id}`;
+                    await this.connection.set(timerKey, "1", "PX", ttl);
+                    // Emit event so in-process scheduler can set a local timer
+                    try {
+                        this.emit("delayedScheduled", job.id, scheduledTs);
+                    } catch (e) {
+                        this.emit("debug", "delayedScheduled emit failed", e as Error);
+                    }
+                    // Also schedule a local timer in this repository instance to promote when due
+                    try {
+                        const existing = this.delayedTimers.get(job.id);
+                        if (existing) clearTimeout(existing);
+                        const t = setTimeout(async () => {
+                            try {
+                                await this.promoteDelayedJobs();
+                            } catch (err) {
+                                this.emit("error", err as Error);
+                            } finally {
+                                this.delayedTimers.delete(job.id);
+                            }
+                        }, ttl);
+                        this.delayedTimers.set(job.id, t);
+                    } catch (e) {
+                        this.emit("debug", "failed to schedule local timer in repository", e as Error);
+                    }
+                }
+            } catch (e) {
+                this.emit("debug", "failed to set delayed timer key", e as Error);
+            }
+        }
     }
 
     async fetchNext(timeout?: number): Promise<Job<T> | null> {
         const now = Date.now();
 
-        const optimisticResult = (await this.connection.eval(
+        // Rate limit check (single token)
+        const allowed = await this.consumeTokensIfAllowed(1);
+        if (!allowed) {
+            // move one waiting job to delayed to smooth bursts
+            await this.moveWaitingToDelayedWithDelay(this.DEFAULT_DELAY_ON_LIMIT_MS);
+            return null;
+        }
+
+        const optimisticResult = (await this.evalScript(
             this.moveJobScript,
-            3,
-            this.waitingQueueKey,
-            this.activeQueueKey,
-            this.notificationQueueKey,
-            String(now),
-            this.jobKeyPrefix,
-            "1",
+            [this.waitingQueueKey, this.activeQueueKey, this.notificationQueueKey],
+            [String(now), this.jobKeyPrefix, "1"],
         )) as [string, string[] | null] | null;
 
         if (optimisticResult) {
@@ -155,15 +292,17 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
             return null;
         }
 
-        const result = (await this.connection.eval(
+        // Second rate check before blocking move
+        const allowed2 = await this.consumeTokensIfAllowed(1);
+        if (!allowed2) {
+            await this.moveWaitingToDelayedWithDelay(this.DEFAULT_DELAY_ON_LIMIT_MS);
+            return null;
+        }
+
+        const result = (await this.evalScript(
             this.moveJobScript,
-            3,
-            this.waitingQueueKey,
-            this.activeQueueKey,
-            this.notificationQueueKey,
-            String(now),
-            this.jobKeyPrefix,
-            "0",
+            [this.waitingQueueKey, this.activeQueueKey, this.notificationQueueKey],
+            [String(now), this.jobKeyPrefix, "0"],
         )) as [string, string[] | null] | null;
 
         if (result) {
@@ -177,13 +316,18 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
         const now = Date.now();
         const lockExpiresAt = now + lockDuration;
 
-        const jobIds = (await this.connection.eval(
+        // Rate limit: request 'count' tokens
+        const allowed = await this.consumeTokensIfAllowed(count);
+        if (!allowed) {
+            // move one waiting job to delayed to smooth bursts
+            await this.moveWaitingToDelayedWithDelay(this.DEFAULT_DELAY_ON_LIMIT_MS);
+            return [];
+        }
+
+        const jobIds = (await this.evalScript(
             this.moveToActiveScript,
-            2,
-            this.waitingQueueKey,
-            this.activeQueueKey,
-            String(count),
-            String(lockExpiresAt),
+            [this.waitingQueueKey, this.activeQueueKey],
+            [String(count), String(lockExpiresAt)],
         )) as string[];
 
         if (!jobIds || jobIds.length === 0) {
@@ -200,7 +344,7 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
                 }
                 pipeline.hgetall(jobKey);
         }
-        const results = await pipeline.exec();
+        const results = (await pipeline.exec()) as Array<[Error | null, Record<string, string>] | null>;
 
         if (!results) {
             return [];
@@ -208,10 +352,9 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
 
         const jobs: Job<T>[] = [];
         for (let i = 0; i < results.length; i += 2) {
-            const [hgetallError, jobData] = results[i + 1] as [
-                Error | null,
-                Record<string, string>,
-            ];
+            const pair = results[i + 1];
+            if (!pair) continue;
+            const [hgetallError, jobData] = pair as [Error | null, Record<string, string>];
             const jobId = jobIds[i / 2];
 
             if (!hgetallError && jobData) {
@@ -265,16 +408,17 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
                 jobData[rawData[i]] = rawData[i + 1];
             }
         } else {
-            const results = await this.connection
+            const results = (await this.connection
                 .pipeline()
                 .hset(jobKey, "state", "active", "started_at", now)
                 .hgetall(jobKey)
-                .exec();
+                .exec()) as Array<[Error | null, Record<string, string>] | null>;
 
             if (!results) return null;
 
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const [err, data] = results[1] as [Error | null, any];
+            const pair = results[1];
+            if (!pair) return null;
+            const [err, data] = pair as [Error | null, Record<string, string>];
 
             if (err || !data) return null;
             jobData = data;
@@ -288,15 +432,7 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
     async markAsCompleted(jobId: string, completedAt: Date): Promise<void> {
         const jobKey = `${this.jobKeyPrefix}${jobId}`;
 
-        await this.connection.eval(
-            this.completeJobScript,
-            3,
-            this.activeQueueKey,
-            jobKey,
-            this.delayedQueueKey,
-            jobId,
-            String(completedAt.getTime()),
-        );
+        await this.evalScript(this.completeJobScript, [this.activeQueueKey, jobKey, this.delayedQueueKey], [jobId, String(completedAt.getTime())]);
     }
 
     async markAsFailed(
@@ -307,49 +443,84 @@ export class RedisQueueRepository<T> implements IQueueRepository<T> {
     ): Promise<void> {
         const jobKey = `${this.jobKeyPrefix}${jobId}`;
 
-        await this.connection.eval(
+        const scriptResult = await this.evalScript(
             this.failJobScript,
-            3,
-            this.activeQueueKey,
-            jobKey,
-            this.delayedQueueKey,
-            jobId,
-            error,
-            String(failedAt.getTime()),
-            nextAttempt ? String(nextAttempt.getTime()) : "-1",
+            [this.activeQueueKey, jobKey, this.delayedQueueKey],
+            [jobId, error, String(failedAt.getTime()), nextAttempt ? String(nextAttempt.getTime()) : "-1"],
         );
+
+        // If the script scheduled a retry it returns the nextAttempt timestamp as string
+        try {
+            const resStr = String(scriptResult ?? "-1");
+            const nextAttemptTs = Number(resStr);
+            if (!isNaN(nextAttemptTs) && nextAttemptTs > 0) {
+                const ttl = nextAttemptTs - failedAt.getTime();
+                if (ttl > 0) {
+                    const timerKey = `${this.prefix}:delayed:timer:${jobId}`;
+                    await this.connection.set(timerKey, "1", "PX", ttl);
+                    // Emit event so in-process scheduler can set a local timer
+                    this.emit("delayedScheduled", jobId, nextAttemptTs);
+
+                    // Also schedule a local timer in this repository instance to promote when due
+                    try {
+                        const existing = this.delayedTimers.get(jobId);
+                        if (existing) clearTimeout(existing);
+                        const t = setTimeout(async () => {
+                            try {
+                                await this.promoteDelayedJobs();
+                            } catch (err) {
+                                this.emit("error", err as Error);
+                            } finally {
+                                this.delayedTimers.delete(jobId);
+                            }
+                        }, ttl);
+                        this.delayedTimers.set(jobId, t);
+                    } catch (e) {
+                        this.emit("debug", "failed to schedule local timer in repository", e as Error);
+                    }
+                }
+            }
+        } catch (e) {
+            this.emit("debug", "failed to set retry timer key", e as Error);
+        }
     }
 
     async promoteDelayedJobs(limit: number = 50): Promise<number> {
         const now = Date.now();
-        const result = await this.connection.eval(
+        const result = (await this.evalScript(
             this.promoteDelayedJobsScript,
-            4,
-            this.delayedQueueKey,
-            this.waitingQueueKey,
-            this.notificationQueueKey,
-            this.jobKeyPrefix,
-            String(now),
-            String(limit),
-        );
-        return Number(result);
+            [this.delayedQueueKey, this.waitingQueueKey, this.notificationQueueKey, this.jobKeyPrefix],
+            [String(now), String(limit)],
+        )) as string[] | null | number;
+
+        // If the script returned a number (legacy), normalize to 0
+        const movedIds: string[] = Array.isArray(result) ? (result as string[]) : [];
+
+        if (!movedIds || movedIds.length === 0) return 0;
+
+        // Update job hashes to reflect waiting state
+        const pipeline = this.connection.pipeline();
+        const updatedAt = String(now);
+        for (const id of movedIds) {
+            const jobKey = `${this.jobKeyPrefix}${id}`;
+            pipeline.hset(jobKey, "state", "waiting", "updated_at", updatedAt);
+        }
+        await pipeline.exec();
+
+        return movedIds.length;
     }
 
     async updateProgress(jobId: string, progress: number): Promise<void> {
         const jobKey = `${this.jobKeyPrefix}${jobId}`;
-        await this.connection.eval(this.updateProgressScript, 1, jobKey, String(progress));
+        await this.evalScript(this.updateProgressScript, [jobKey], [String(progress)]);
     }
 
     async extendLock(jobId: string, lockExpiresAt: number, ownerToken?: string): Promise<boolean> {
         const jobKey = `${this.jobKeyPrefix}${jobId}`;
-        const result = await this.connection.eval(
+        const result = await this.evalScript(
             this.extendLockScript,
-            2,
-            this.activeQueueKey,
-            jobKey,
-            jobId,
-            String(lockExpiresAt),
-            ownerToken ?? "",
+            [this.activeQueueKey, jobKey],
+            [jobId, String(lockExpiresAt), ownerToken ?? ""],
         );
 
         return Number(result) === 1;
