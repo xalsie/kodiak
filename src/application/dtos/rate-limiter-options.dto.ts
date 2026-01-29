@@ -23,6 +23,27 @@ export interface RateLimiterOptions {
      * - `global`: reserved for future use — not implemented; behaviour is the same as `queue`.
      */
     scope?: "queue" | "global";
+
+    /**
+     * Mode of the limiter. Defaults to token-bucket when omitted for backward compatibility.
+     */
+    mode?: "token-bucket" | "sliding-window";
+
+    /**
+     * Sliding window configuration (used when mode === 'sliding-window').
+     */
+    slidingWindow?: {
+        /** window size in milliseconds */
+        windowSizeMs: number;
+        /** max number of events allowed in the sliding window */
+        limit: number;
+        /** action when the limit is reached */
+        policy?: "reject" | "delay" | "enqueue";
+        /** delay applied when policy === 'delay' (ms) */
+        delayMs?: number;
+        /** precision, usually 'ms' (default) */
+        precision?: "ms" | "s";
+    };
 }
 
 export default RateLimiterOptions;

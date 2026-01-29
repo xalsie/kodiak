@@ -4,6 +4,7 @@
 -- KEYS[3]: Job Key Prefix
 
 -- ARGV[1]: Next attempt timestamp (ms)
+-- ARGV[2]: optional metadata string (JSON) returned to caller
 
 local waiting = KEYS[1]
 local delayed = KEYS[2]
@@ -20,6 +21,7 @@ local jobId = res[1]
 -- Note: avoid accessing job hash from Lua to remain compatible with strict key declarations.
 -- We'll only move the id to the delayed zset atomically; the caller will update the job hash.
 redis.call('ZADD', delayed, nextAttempt, jobId)
+local meta = ARGV[2] or ""
 
--- Return jobId and scheduled timestamp so client can create timer
-return {jobId, tostring(nextAttempt)}
+-- Return jobId, scheduled timestamp and optional metadata so client can create timer and update job hash
+return {jobId, tostring(nextAttempt), meta}

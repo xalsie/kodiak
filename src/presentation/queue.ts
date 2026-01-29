@@ -35,33 +35,35 @@ export class Queue<T> extends EventEmitter {
         this.startScheduler();
 
         // Listen for repository events to schedule local timers when delayed jobs are scheduled
-        this.queueRepository.on("delayedScheduled", (jobId: string, scheduledTs: number) => {
-            try {
-                const now = Date.now();
-                const delay = Math.max(0, scheduledTs - now);
-                console.log(new Date().toISOString(), `[queue] scheduling local timer for job=${jobId} delay=${delay}ms (scheduledTs=${scheduledTs})`);
-                // clear existing timer for this job if present
-                const existing = this.delayedTimers.get(jobId);
-                if (existing) {
-                    clearTimeout(existing);
-                }
-                const t = setTimeout(async () => {
-                    console.log(new Date().toISOString(), `[queue] local timer fired for job=${jobId}`);
-                    try {
-                        // Promote delayed jobs when timer fires
-                        await this.queueRepository.promoteDelayedJobs();
-                        console.log(new Date().toISOString(), `[queue] promoteDelayedJobs called by local timer for job=${jobId}`);
-                    } catch (err) {
-                        this.emit("error", err as Error);
-                    } finally {
-                        this.delayedTimers.delete(jobId);
+        if (this.queueRepository && typeof (this.queueRepository as any).on === "function") {
+            (this.queueRepository as any).on("delayedScheduled", (jobId: string, scheduledTs: number) => {
+                try {
+                    const now = Date.now();
+                    const delay = Math.max(0, scheduledTs - now);
+                    console.log(new Date().toISOString(), `[queue] scheduling local timer for job=${jobId} delay=${delay}ms (scheduledTs=${scheduledTs})`);
+                    // clear existing timer for this job if present
+                    const existing = this.delayedTimers.get(jobId);
+                    if (existing) {
+                        clearTimeout(existing);
                     }
-                }, delay);
-                this.delayedTimers.set(jobId, t);
-            } catch (err) {
-                this.emit("debug", "failed to schedule local delayed timer", err as Error);
-            }
-        });
+                    const t = setTimeout(async () => {
+                        console.log(new Date().toISOString(), `[queue] local timer fired for job=${jobId}`);
+                        try {
+                            // Promote delayed jobs when timer fires
+                            await this.queueRepository.promoteDelayedJobs();
+                            console.log(new Date().toISOString(), `[queue] promoteDelayedJobs called by local timer for job=${jobId}`);
+                        } catch (err) {
+                            this.emit("error", err as Error);
+                        } finally {
+                            this.delayedTimers.delete(jobId);
+                        }
+                    }, delay);
+                    this.delayedTimers.set(jobId, t);
+                } catch (err) {
+                    this.emit("debug", "failed to schedule local delayed timer", err as Error);
+                }
+            });
+        }
     }
 
     public async add(id: string, data: T, options?: JobOptions): Promise<Job<T>> {
@@ -127,15 +129,7 @@ export class Queue<T> extends EventEmitter {
             this.schedulerInterval = null;
         }
         if (this.subscriber) {
-            try {
-                await this.subscriber.quit();
-            } catch (_) {
-                try {
-                    (this.subscriber as any).disconnect();
-                } catch (_) {
-                    // ignore
-                }
-            }
+            await this.subscriber.quit();
             this.subscriber = null;
         }
         // clear any local delayed timers
